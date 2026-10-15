@@ -1,0 +1,298 @@
+name: terraform-deploy
+
+# Reusable. Plans (pull request) or applies (main, manual) the Terraform components of the caller
+# repo: one job per component × account × region, found from the tfvars files.
+#
+#   <component>/env/<account>/<region>.tfvars   regional       key <account>/<region>/<component>
+#   global/<name>/env/<account>.tfvars          global         key <account>/global/<name>
+#   cross-region/<name>/env/<account>.tfvars    cross-region   key <account>/cross-region/<name>
+#
+# Only what changed runs: a tfvars change runs that tfvars; a change in a component's code runs
+# every tfvars of it. Manual runs pick a target (or everything) and can destroy (reverse order).
+#
+# Conventions it relies on:
+#   - backends/<account>.tfbackend in the caller repo (state bucket of the account);
+#   - AWS_ACCOUNT_IDS org variable, JSON {"<account>": "<id>"}: accounts not listed (not
+#     bootstrapped yet) are skipped;
+#   - roles created by organization/bootstrap: github-actions-<repo>-plan (pull requests,
+#     read-only) and github-actions-<repo> (write; trusts only the GitHub Environment named after
+#     the account, which is where approvals are required).
+#
+#   jobs:
+#     terraform:
+#       uses: JonomaIT/pipelines/.github/workflows/terraform-deploy.yml@<tag>
+#       with:
+#         order: network ecs-cluster alb-shared
+#       secrets:
+#         CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_JONOMA }}
+on:
+  workflow_call:
+    inputs:
+      order:
+        type: string
+        required: true
+        description: Components in apply order, space-separated; components not listed are never run
+      target:
+        type: string
+        required: false
+        default: ""
+        description: Manual runs - a component (every tfvars of it) or one tfvars path; empty = all
+      destroy:
+        type: boolean
+        required: false
+        default: false
+        description: Manual runs - destroy the targets, in reverse order
+      primary-region:
+        type: string
+        required: false
+        default: us-east-1
+        description: Applied before the other regions of the same component
+      terraform-version:
+        type: string
+        required: false
+        default: ""
+        description: Terraform version (default - the TERRAFORM_VERSION org variable)
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: false
+        description: Only for components that use the Cloudflare provider
+
+permissions:
+  contents: read
+  id-token: write # OIDC with AWS
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  targets:
+    name: Targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.find.outputs.matrix }}
+      count: ${{ steps.find.outputs.count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Find targets
+        id: find
+        shell: python
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          ORDER: ${{ inputs.order }}
+          TARGET: ${{ inputs.target }}
+          DESTROY: ${{ inputs.destroy }}
+          PRIMARY_REGION: ${{ inputs.primary-region }}
+          ACCOUNTS: ${{ vars.AWS_ACCOUNT_IDS }}
+        run: |
+          import glob
+          import json
+          import os
+          import subprocess
+
+          # Inputs (environment): EVENT, BASE, HEAD, ORDER, TARGET, DESTROY, PRIMARY_REGION, ACCOUNTS.
+          order = os.environ["ORDER"].split()
+          accounts = json.loads(os.environ.get("ACCOUNTS") or "{}")
+          event = os.environ["EVENT"]
+          target = os.environ.get("TARGET", "").strip().strip("/")
+          destroy = os.environ.get("DESTROY") == "true"
+          primary = os.environ.get("PRIMARY_REGION", "us-east-1")
+
+
+          def tfvars_of(component):
+              return sorted(glob.glob(f"{component}/env/**/*.tfvars", recursive=True))
+
+
+          def component_of(path):
+              """Longest component in the order that contains the path (None = not a component)."""
+              hits = [c for c in order if path == c or path.startswith(c + "/")]
+              return max(hits, key=len) if hits else None
+
+
+          def describe(path):
+              component, rest = path.split("/env/", 1)
+              parts = rest[: -len(".tfvars")].split("/")
+              account = parts[0]
+              if len(parts) == 2:  # env/<account>/<region>.tfvars: regional
+                  region = parts[1]
+                  key = f"{account}/{region}/{component}"
+              else:  # env/<account>.tfvars: global/<name> or cross-region/<name>
+                  kind, name = component.split("/", 1)
+                  region = kind
+                  key = f"{account}/{kind}/{name}"
+              return {
+                  "name": f"{component} · {account} · {region}",
+                  "component": component,
+                  "tfvars": "env/" + rest,
+                  "account": account,
+                  "account_id": accounts.get(account, ""),
+                  "region": region,
+                  "key": key,
+              }
+
+
+          selected = set()
+          if event == "workflow_dispatch":
+              if not target:
+                  for c in order:
+                      selected.update(tfvars_of(c))
+              elif target.endswith(".tfvars"):
+                  selected.add(target)
+              else:
+                  selected.update(tfvars_of(target))
+          else:
+              base, head = os.environ["BASE"], os.environ["HEAD"]
+              if not base or set(base) == {"0"}:  # first push of a branch: everything
+                  changed = [p for c in order for p in glob.glob(f"{c}/**", recursive=True)]
+              else:
+                  rng = f"{base}...{head}" if event == "pull_request" else f"{base}..{head}"
+                  changed = subprocess.run(["git", "diff", "--name-only", rng], check=True,
+                                           capture_output=True, text=True).stdout.split()
+              for path in changed:
+                  if path.startswith("backends/") and path.endswith(".tfbackend"):
+                      account = os.path.basename(path)[: -len(".tfbackend")]
+                      for c in order:
+                          selected.update(p for p in tfvars_of(c) if describe(p)["account"] == account)
+                      continue
+                  component = component_of(path)
+                  if not component:
+                      continue
+                  if path.startswith(component + "/env/") and path.endswith(".tfvars"):
+                      if os.path.exists(path):  # a deleted tfvars has nothing to plan
+                          selected.add(path)
+                  else:  # code of the component: every account and region using it
+                      selected.update(tfvars_of(component))
+
+          targets = []
+          for path in sorted(selected):
+              t = describe(path)
+              if t["component"] not in order:
+                  print(f"::warning::{path}: component not in the deploy order, skipped")
+                  continue
+              if not t["account_id"]:
+                  print(f"::notice::{path}: account {t['account']} not in AWS_ACCOUNT_IDS (not bootstrapped), skipped")
+                  continue
+              targets.append(t)
+
+          # Apply order: components in the given order, primary region first (e.g. its ACM validation
+          # record serves the other regions). Destroy runs the exact reverse.
+          targets.sort(key=lambda t: (order.index(t["component"]), t["account"], t["region"] != primary, t["region"]))
+          if destroy:
+              targets.reverse()
+
+          with open(os.environ.get("GITHUB_OUTPUT", "/dev/stdout"), "a") as out:
+              out.write(f"matrix={json.dumps({'include': targets})}\n")
+              out.write(f"count={len(targets)}\n")
+          with open(os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout"), "a") as summary:
+              summary.write(f"### {'Destroy' if destroy else 'Targets'} ({len(targets)})\n\n| # | Component | Account | Region | State key |\n|---|---|---|---|---|\n")
+              for i, t in enumerate(targets, 1):
+                  summary.write(f"| {i} | `{t['component']}` | {t['account']} | {t['region']} | `{t['key']}` |\n")
+
+  # Pull requests: read-only plan with the -plan role. A PR can change the workflow it runs with,
+  # so it never gets a role that writes.
+  plan:
+    name: Plan · ${{ matrix.name }}
+    needs: targets
+    if: github.event_name == 'pull_request' && needs.targets.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.component }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ inputs.terraform-version || vars.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: AWS credentials (read-only)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ matrix.account_id }}:role/github-actions-${{ github.event.repository.name }}-plan
+          aws-region: ${{ inputs.primary-region }}
+
+      - name: Terraform init
+        run: terraform init -backend-config="$GITHUB_WORKSPACE/backends/${{ matrix.account }}.tfbackend" -backend-config="key=${{ matrix.key }}"
+
+      - name: Terraform plan
+        run: terraform plan -lock-timeout=5m -no-color -var-file="${{ matrix.tfvars }}" -out=tfplan
+
+      - name: Plan summary
+        if: always()
+        run: |
+          {
+            echo "### ${{ matrix.name }}"
+            echo '```'
+            terraform show -no-color tfplan 2>/dev/null | grep -E '^\s+# |^Plan:|^No changes' || echo "No plan (see the logs)."
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # main and manual runs: plan + apply of that same plan, one target at a time, in order. The job
+  # declares the account's GitHub Environment: the write role only trusts that, and production
+  # waits for a required reviewer before the job starts.
+  apply:
+    name: ${{ inputs.destroy && 'Destroy' || 'Apply' }} · ${{ matrix.name }}
+    needs: targets
+    if: github.event_name != 'pull_request' && needs.targets.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ matrix.account }}
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.component }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ inputs.terraform-version || vars.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: AWS credentials (write)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ matrix.account_id }}:role/github-actions-${{ github.event.repository.name }}
+          aws-region: ${{ inputs.primary-region }}
+
+      - name: Terraform init
+        run: terraform init -backend-config="$GITHUB_WORKSPACE/backends/${{ matrix.account }}.tfbackend" -backend-config="key=${{ matrix.key }}"
+
+      - name: Terraform plan
+        run: terraform plan -lock-timeout=5m -no-color -var-file="${{ matrix.tfvars }}" ${{ inputs.destroy && '-destroy' || '' }} -out=tfplan
+
+      - name: Plan summary
+        run: |
+          {
+            echo "### ${{ matrix.name }}"
+            echo '```'
+            terraform show -no-color tfplan | grep -E '^\s+# |^Plan:|^No changes' || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Applies exactly the plan above; if the state changed in between, Terraform refuses it.
+      - name: Terraform apply
+        run: terraform apply -lock-timeout=5m -no-color tfplan

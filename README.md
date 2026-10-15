@@ -4,10 +4,57 @@ What turns an app's values into a running app. Apps never write Terraform: they 
 
 ```
 pipelines/
-├── terraform-runner/
-│   └── ecs/            generic root for every ECS app: calls the ecs-service pattern
-└── .github/workflows/  CI (reusable deploy workflows come next)
+├── .github/workflows/
+│   ├── terraform-ci.yml       reusable: fmt, validate, terraform test of every root
+│   ├── terraform-deploy.yml   reusable: plan (PR) / apply (main, manual) per component × account × region
+│   └── ci.yml                 this repo's own checks (actionlint + terraform-ci)
+└── terraform-runner/
+    └── ecs/                   generic root for every ECS app: calls the ecs-service pattern
 ```
+
+**All the logic lives here.** Other repos keep a caller of a few lines that says *when* to run and passes data (like the apply order), always pinned to a tag of this repo:
+
+```yaml
+jobs:
+  terraform:
+    uses: JonomaIT/pipelines/.github/workflows/terraform-ci.yml@v1.0.0
+```
+
+| Repo | Calls |
+|---|---|
+| `terraform-modules`, `organization` | `terraform-ci` |
+| `infrastructure` | `terraform-ci` + `terraform-deploy` |
+| apps (`svc-*`) | `deploy-ecs` (next) |
+
+## terraform-ci
+
+Every folder with a `versions.tf` is a root: `terraform fmt -check`, then `init -backend=false`, `validate` and, when it has `tests/`, `terraform test`, once per `env/**/*.tfvars` when there are any. No cloud access: the tests use mocked providers.
+
+## terraform-deploy
+
+One job per **component × account × region**, found from the tfvars:
+
+| tfvars | Type | State key |
+|---|---|---|
+| `<component>/env/<account>/<region>.tfvars` | regional | `<account>/<region>/<component>` |
+| `global/<name>/env/<account>.tfvars` | global | `<account>/global/<name>` |
+| `cross-region/<name>/env/<account>.tfvars` | cross-region | `<account>/cross-region/<name>` |
+
+| Event | What runs | AWS role |
+|---|---|---|
+| pull request | `plan` of what changed, in parallel; result in the run summary | `github-actions-<repo>-plan` (read-only, PRs only) |
+| push to `main` | `plan` + `apply` of what changed, one at a time, in `order` | `github-actions-<repo>`, inside the GitHub Environment of the account (production waits for approval) |
+| manual | the same for a component, a tfvars or everything; `destroy: true` runs the reverse order | same as main |
+
+*What changed*: a tfvars runs itself; a change in a component's code runs every tfvars of it; a change in `backends/<account>.tfbackend` runs everything in that account. Within a component the primary region goes first (its ACM validation record serves the other regions).
+
+Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** org variable (`{"production": "…"}`; accounts not listed are skipped) and a GitHub Environment per account. Components with Cloudflare receive `CLOUDFLARE_API_TOKEN`.
+
+## Versions
+
+| Tag | Change |
+|---|---|
+| `v1.0.0` | `terraform-ci` and `terraform-deploy` reusable workflows; ECS runner. |
 
 ## ECS runner
 
@@ -36,6 +83,7 @@ State key: `<env>/<region>/apps/<name>`, in the bucket of the account being depl
 
 ## Next
 
-- Reusable workflows: `build-push.yml` (image to ECR in shared-services), `deploy-ecs.yml` (one job per region, `fail-fast: false`, production after approval), `rollback-ecs.yml`.
+- App workflows: `build-push.yml` (image to ECR in shared-services), `deploy-ecs.yml` (the ECS runner, one job per region in `regions`, production after approval), `rollback-ecs.yml`. They need the ECR component and a deploy role per app in the bootstrap.
+- Regions in parallel in `terraform-deploy` (today one target at a time, in order).
 - The kit of workflows each app repo receives (`callers/ecs`).
 - Runners for `lambda`, `cloudfront` and `eks`.

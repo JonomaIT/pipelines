@@ -1,6 +1,7 @@
 name: CI
 
-# Runners: formatting, validation and terraform test (mocked provider, no AWS access).
+# This repo's own checks: the workflows (actionlint) and the runners (the same terraform-ci the
+# other repos call, used here from the local copy so a PR tests its own changes).
 on:
   pull_request:
     branches:
@@ -13,30 +14,16 @@ permissions:
   contents: read
 
 jobs:
-  runners:
-    name: fmt · validate · test
+  actionlint:
+    name: actionlint
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        with:
-          terraform_version: ${{ vars.TERRAFORM_VERSION }}
-          terraform_wrapper: false
+      - name: Lint workflows
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
 
-      - name: Terraform fmt
-        run: terraform fmt -check -recursive
-
-      - name: Validate and test each runner
-        run: |
-          for v in terraform-runner/*/versions.tf; do
-            dir=$(dirname "$v")
-            echo "::group::$dir"
-            terraform -chdir="$dir" init -backend=false -input=false
-            terraform -chdir="$dir" validate
-            terraform -chdir="$dir" test
-            echo "::endgroup::"
-          done
+  terraform:
+    uses: ./.github/workflows/terraform-ci.yml

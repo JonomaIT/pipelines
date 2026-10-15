@@ -1,0 +1,63 @@
+name: terraform-ci
+
+# Reusable. Every Terraform root of the caller repo (any folder with a versions.tf): fmt,
+# validate and terraform test, with no cloud access (tests use mocked providers). A root with
+# env/**/*.tfvars is tested once per tfvars, so every account/region configuration is checked.
+#
+#   jobs:
+#     terraform:
+#       uses: JonomaIT/pipelines/.github/workflows/terraform-ci.yml@<tag>
+on:
+  workflow_call:
+    inputs:
+      terraform-version:
+        type: string
+        required: false
+        default: ""
+        description: Terraform version (default - the TERRAFORM_VERSION org variable)
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: fmt · validate · test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ inputs.terraform-version || vars.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Validate and test every root
+        run: |
+          set -euo pipefail
+          export TF_PLUGIN_CACHE_DIR="$RUNNER_TEMP/plugin-cache"
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          roots=$(find . -name versions.tf -not -path '*/.terraform/*' -exec dirname {} \; | sort)
+          if [ -z "$roots" ]; then echo "No Terraform roots found."; exit 0; fi
+          for dir in $roots; do
+            echo "::group::$dir"
+            terraform -chdir="$dir" init -backend=false
+            terraform -chdir="$dir" validate
+            if [ -d "$dir/tests" ]; then
+              vars=$(cd "$dir" && find env -name '*.tfvars' 2>/dev/null | sort || true)
+              if [ -n "$vars" ]; then
+                for f in $vars; do echo "--- $f"; terraform -chdir="$dir" test -var-file="$f"; done
+              else
+                terraform -chdir="$dir" test
+              fi
+            fi
+            echo "::endgroup::"
+          done
