@@ -52,7 +52,10 @@ jobs:
             terraform -chdir="$dir" init -backend=false
             terraform -chdir="$dir" validate
             if [ -d "$dir/tests" ]; then
-              vars=$(cd "$dir" && find env -name '*.tfvars' 2>/dev/null | sort || true)
+              vars=""
+              if [ -d "$dir/env" ]; then
+                vars=$(cd "$dir" && find env -name '*.tfvars' | sort)
+              fi
               if [ -n "$vars" ]; then
                 for f in $vars; do echo "--- $f"; terraform -chdir="$dir" test -var-file="$f"; done
               else
