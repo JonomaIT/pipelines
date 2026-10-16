@@ -11,3 +11,6 @@ provider "aws" {
     }
   }
 }
+
+# Token from CLOUDFLARE_API_TOKEN: in the app pipeline, a token that can only edit DNS records.
+provider "cloudflare" {}

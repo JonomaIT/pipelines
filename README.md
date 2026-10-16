@@ -66,6 +66,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v1.2.0` | ECS runner: the app creates its own public names (ADR-010, `app-dns`), only in the primary region's run; modules `v0.7.0`. |
 | `v1.1.2` | `terraform-deploy`: a target with no state file yet (never applied) no longer stops the plan step. |
 | `v1.1.1` | `terraform-deploy`: a plan with changes is no longer reported as failed (bash `-e` vs `-detailed-exitcode`); a never-deployed target that cannot be planned alone is **blocked**, not failed, and is planned at apply time. |
 | `v1.1.0` | `terraform-ci`: `security scan` job (gitleaks, TFLint, Trivy). `terraform-deploy`: plan of everything first, **one approval per account** looking at the saved plans, apply of those plans; PR comment and `Plan result` check; `drift` mode with an issue. Needs the plan role trusting `main` (organization bootstrap). |
@@ -91,6 +92,8 @@ terraform plan \
 | the pipeline | `environment` (GitHub Environment), `region` (one job per region in `regions`), `image` (built once, promoted) |
 | `deploy/app.hcl` | `runtime`, `name`, `port`, `health_check_path`, `env`, `secrets`, `slo`, `cobertura_minima` |
 | `deploy/env/<account>.tfvars` | `regions`, `hosts`, `cpu`, `memory`, `min_capacity`, `max_capacity`, `cpu_target`, `fora_do_horario` |
+
+**Public names (ADR-010):** the run of the primary region (first in `regions`) creates each `hosts` entry as a proxied CNAME to the environment's entry (`ingress.<zone>` in production, `ingress-<env>.<zone>` elsewhere), with the `app-dns` pattern: owner in the record comment, reserved names and names owned by another app refused. Needs `CLOUDFLARE_API_TOKEN` (in the app pipeline: a token that can only edit DNS).
 
 Checks at plan time: `runtime = "ecs"`, production with `min_capacity >= 2` and an `slo`, the region listed in `regions`, every secret existing in Secrets Manager (`jonomait/<env>/<name>/<secret>`). Staging runs on Fargate Spot, production on Fargate.
 

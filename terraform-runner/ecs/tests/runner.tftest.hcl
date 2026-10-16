@@ -40,6 +40,12 @@ mock_provider "aws" {
   }
 }
 
+mock_provider "cloudflare" {
+  mock_data "cloudflare_zone" {
+    defaults = { id = "zone123" }
+  }
+}
+
 variables {
   # pipeline
   environment = "staging"
@@ -64,6 +70,29 @@ run "staging_app" {
   assert {
     condition     = one(output.public_hosts) == "hello-stg.joshuel.com.br" && output.internal_url == "http://svc-hello.jonomait.internal:80"
     error_message = "Public and internal names must follow the convention."
+  }
+
+  assert {
+    condition     = length(module.dns) == 1 && one(module.dns[0].names) == "hello-stg.joshuel.com.br"
+    error_message = "The primary region's run creates the app's public names."
+  }
+}
+
+run "secondary_region_does_not_touch_dns" {
+  command = plan
+
+  variables {
+    environment  = "production"
+    region       = "sa-east-1"
+    regions      = ["us-east-1", "sa-east-1"]
+    hosts        = ["hello.joshuel.com.br"]
+    min_capacity = 2
+    slo          = { disponibilidade = 99.5, latencia_p95_ms = 500 }
+  }
+
+  assert {
+    condition     = length(module.dns) == 0
+    error_message = "Only the primary region's run owns the DNS names (they are global)."
   }
 }
 
