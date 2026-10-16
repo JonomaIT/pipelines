@@ -219,8 +219,9 @@ jobs:
               for i, t in enumerate(targets, 1):
                   summary.write(f"| {i} | `{t['component']}` | {t['account']} | {t['region']} | `{t['key']}` |\n")
 
-  # Read-only plan of every target, in parallel. On main a plan may fail only because it depends on
-  # a target applied earlier in this same run: it does not block, the apply job plans it again.
+  # Read-only plan of every target, in parallel. A target never deployed that cannot be planned
+  # alone (it reads something an earlier target creates) is "blocked": not an error, it is planned
+  # at apply time. On main no plan blocks the apply job, which plans again what has no saved plan.
   plan:
     name: Plan · ${{ matrix.name }}
     needs: targets
@@ -263,16 +264,28 @@ jobs:
         run: |
           set -uo pipefail
           out="$RUNNER_TEMP/out"; mkdir -p "$out"
-          if [ "$DRIFT" = "true" ] && [ -z "$(terraform state list 2>/dev/null)" ]; then
+          deployed=$(terraform state list 2>/dev/null | head -n1)
+          if [ "$DRIFT" = "true" ] && [ -z "$deployed" ]; then
             echo "not-deployed" > "$out/status"; echo "Not deployed: nothing to compare."; exit 0
           fi
+          set +e # -detailed-exitcode: 0 no changes, 1 error, 2 changes
           # shellcheck disable=SC2086
           terraform plan -lock-timeout=5m -no-color -detailed-exitcode -var-file="${{ matrix.tfvars }}" $DESTROY_FLAG -out=tfplan
           rc=$?
+          set -e
           case $rc in
             0) echo "no-changes" > "$out/status" ;;
             2) echo "changes" > "$out/status" ;;
-            *) echo "failed" > "$out/status"; exit "$rc" ;;
+            *)
+              # Never deployed and unable to plan alone: it reads something another target creates
+              # (e.g. ecs-cluster needs the VPC). Not a code error (validate and tests cover that):
+              # it is planned at apply time, after the target it depends on.
+              if [ -z "$deployed" ] && [ "$DRIFT" != "true" ]; then
+                echo "blocked" > "$out/status"
+                echo "::notice title=${{ matrix.name }}::not deployed yet and depends on another target: planned at apply time"
+                exit 0
+              fi
+              echo "failed" > "$out/status"; exit "$rc" ;;
           esac
           # Only runs that apply keep the plan file (artifacts live 1 day; secrets never go
           # through Terraform variables, they stay in Secrets Manager).
@@ -288,6 +301,7 @@ jobs:
             echo '```'
             if [ -f tfplan ]; then terraform show -no-color tfplan | grep -E '^\s+# |^Plan:|^No changes' || true
             elif grep -q not-deployed "$out/status"; then echo "not deployed"
+            elif grep -q blocked "$out/status"; then echo "not deployed yet; depends on another target: planned at apply time"
             else echo "no plan (see the job log)"; fi
             echo '```'
           } > "$out/summary.md"
