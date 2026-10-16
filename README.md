@@ -28,7 +28,14 @@ jobs:
 
 ## terraform-ci
 
-Every folder with a `versions.tf` is a root: `terraform fmt -check`, then `init -backend=false`, `validate` and, when it has `tests/`, `terraform test`, once per `env/**/*.tfvars` when there are any. No cloud access: the tests use mocked providers.
+Two jobs, no cloud access:
+
+| Job | Does |
+|---|---|
+| `fmt · validate · test` | every folder with a `versions.tf` is a root: `terraform fmt -check`, `init -backend=false`, `validate` and, when it has `tests/`, `terraform test` (mocked providers), once per `env/**/*.tfvars` when there are any |
+| `security scan` | **gitleaks** (secrets in the code and the history), **TFLint** (Terraform mistakes), **Trivy** (insecure configuration, HIGH and CRITICAL) |
+
+An accepted finding is an exception **annotated in the code, with the reason**, right above the resource: `#trivy:ignore:<id>` or `# tflint-ignore: <rule>`. Scanner images are pinned by version.
 
 ## terraform-deploy
 
@@ -40,11 +47,16 @@ One job per **component × account × region**, found from the tfvars:
 | `global/<name>/env/<account>.tfvars` | global | `<account>/global/<name>` |
 | `cross-region/<name>/env/<account>.tfvars` | cross-region | `<account>/cross-region/<name>` |
 
-| Event | What runs | AWS role |
-|---|---|---|
-| pull request | `plan` of what changed, in parallel; result in the run summary | `github-actions-<repo>-plan` (read-only, PRs only) |
-| push to `main` | `plan` + `apply` of what changed, one at a time, in `order` | `github-actions-<repo>`, inside the GitHub Environment of the account (production waits for approval) |
-| manual | the same for a component, a tfvars or everything; `destroy: true` runs the reverse order | same as main |
+| Event | What runs |
+|---|---|
+| pull request | `plan` of what changed, in parallel, with the read-only role; the plans become **one PR comment** (updated on every push); **`Plan result`** fails if any plan fails: make it a required check |
+| push to `main` | 1. `plan` of what changed, in parallel (read-only role), shown in the run summary · 2. **one approval per account** (its GitHub Environment), looking at those plans · 3. `apply` of **exactly those saved plans**, in `order` |
+| manual | the same for a component, a tfvars or everything; `destroy: true` runs the reverse order |
+| `drift: true` (schedule) | `plan` of everything **deployed** (empty states are skipped); changes or failures open or update the **"Terraform drift detected"** issue, a clean run closes it; never applies |
+
+On `main`, a target whose plan needed an earlier target of the same run (e.g. `ecs-cluster` before its VPC exists) cannot be planned up front: it is planned at apply time, and that plan is written to the summary. Every other target applies the reviewed plan; if the state changed since, Terraform refuses it.
+
+Roles: `github-actions-<repo>-plan` (read-only; pull requests and `main`) for plans and drift; `github-actions-<repo>` (write) only in the apply job, inside the account's GitHub Environment. Plan files are kept as artifacts for 1 day, only by runs that apply (never on pull requests).
 
 *What changed*: a tfvars runs itself; a change in a component's code runs every tfvars of it; a change in `backends/<account>.tfbackend` runs everything in that account. Within a component the primary region goes first (its ACM validation record serves the other regions).
 
@@ -54,6 +66,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v1.1.0` | `terraform-ci`: `security scan` job (gitleaks, TFLint, Trivy). `terraform-deploy`: plan of everything first, **one approval per account** looking at the saved plans, apply of those plans; PR comment and `Plan result` check; `drift` mode with an issue. Needs the plan role trusting `main` (organization bootstrap). |
 | `v1.0.0` | `terraform-ci` and `terraform-deploy` reusable workflows; ECS runner. |
 
 ## ECS runner
@@ -84,6 +97,7 @@ State key: `<env>/<region>/apps/<name>`, in the bucket of the account being depl
 ## Next
 
 - App workflows: `build-push.yml` (image to ECR in shared-services), `deploy-ecs.yml` (the ECS runner, one job per region in `regions`, production after approval), `rollback-ecs.yml`. They need the ECR component and a deploy role per app in the bootstrap.
-- Regions in parallel in `terraform-deploy` (today one target at a time, in order).
+- Regions in parallel in `terraform-deploy` (today one target at a time per account, in order).
+- Infracost (cost of each PR): needs a free Infracost API key.
 - The kit of workflows each app repo receives (`callers/ecs`).
 - Runners for `lambda`, `cloudfront` and `eks`.
