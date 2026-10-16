@@ -264,7 +264,8 @@ jobs:
         run: |
           set -uo pipefail
           out="$RUNNER_TEMP/out"; mkdir -p "$out"
-          deployed=$(terraform state list 2>/dev/null | head -n1)
+          # No state file yet (never applied) makes "state list" fail: that also means not deployed.
+          deployed=$(terraform state list 2>/dev/null | head -n1 || true)
           if [ "$DRIFT" = "true" ] && [ -z "$deployed" ]; then
             echo "not-deployed" > "$out/status"; echo "Not deployed: nothing to compare."; exit 0
           fi
