@@ -54,7 +54,7 @@ One job per **component × account × region**, found from the tfvars:
 | manual | the same for a component, a tfvars or everything; `destroy: true` runs the reverse order |
 | `drift: true` (schedule) | `plan` of everything **deployed** (empty states are skipped); changes or failures open or update the **"Terraform drift detected"** issue, a clean run closes it; never applies |
 
-On `main`, a target whose plan needed an earlier target of the same run (e.g. `ecs-cluster` before its VPC exists) cannot be planned up front: it is planned at apply time, and that plan is written to the summary. Every other target applies the reviewed plan; if the state changed since, Terraform refuses it.
+A target never deployed that cannot be planned alone (it reads something an earlier target creates) is **blocked** on pull requests and on `main`: not an error, it is planned at apply time. On `main`, a target whose plan needed an earlier target of the same run (e.g. `ecs-cluster` before its VPC exists) cannot be planned up front: it is planned at apply time, and that plan is written to the summary. Every other target applies the reviewed plan; if the state changed since, Terraform refuses it.
 
 Roles: `github-actions-<repo>-plan` (read-only; pull requests and `main`) for plans and drift; `github-actions-<repo>` (write) only in the apply job, inside the account's GitHub Environment. Plan files are kept as artifacts for 1 day, only by runs that apply (never on pull requests).
 
@@ -66,6 +66,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v1.1.1` | `terraform-deploy`: a plan with changes is no longer reported as failed (bash `-e` vs `-detailed-exitcode`); a never-deployed target that cannot be planned alone is **blocked**, not failed, and is planned at apply time. |
 | `v1.1.0` | `terraform-ci`: `security scan` job (gitleaks, TFLint, Trivy). `terraform-deploy`: plan of everything first, **one approval per account** looking at the saved plans, apply of those plans; PR comment and `Plan result` check; `drift` mode with an issue. Needs the plan role trusting `main` (organization bootstrap). |
 | `v1.0.0` | `terraform-ci` and `terraform-deploy` reusable workflows; ECS runner. |
 
