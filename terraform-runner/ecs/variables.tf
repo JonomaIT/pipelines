@@ -22,6 +22,12 @@ variable "image" {
   description = "Image built once and promoted: <shared-services>.dkr.ecr.us-east-1.amazonaws.com/<name>:<sha>"
 }
 
+variable "zone" {
+  type        = string
+  description = "Cloudflare zone of the platform; the app's hosts live under it"
+  default     = "joshuel.com.br"
+}
+
 # ----------------------------------------------------------- deploy/app.hcl
 # tflint-ignore: terraform_unused_declarations # part of the app contract
 variable "runtime" {

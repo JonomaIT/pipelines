@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 6.0"
     }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 5.0"
+    }
   }
 
   # Bucket of the account being deployed; key <env>/<region>/apps/<name>, both passed at init.

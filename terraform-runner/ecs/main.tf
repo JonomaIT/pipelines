@@ -26,7 +26,7 @@ data "aws_secretsmanager_secret" "app" {
 }
 
 module "app" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//ecs-service?ref=v0.6.1"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//ecs-service?ref=v0.7.0"
 
   name        = var.name
   environment = var.environment
@@ -46,4 +46,23 @@ module "app" {
 
   # Cheaper interruptible capacity outside production.
   capacity_provider = var.environment == "production" ? "FARGATE" : "FARGATE_SPOT"
+}
+
+# The app's public names (ADR-010): proxied CNAMEs to the environment's entry, created and removed
+# with the app. DNS is global, so only the run of the primary region (the first in regions) owns
+# them; the other regions only add the host rule on their own ALB.
+locals {
+  env_short = { staging = "stg", production = "prd" }[var.environment]
+  ingress   = var.environment == "production" ? "ingress.${var.zone}" : "ingress-${local.env_short}.${var.zone}"
+  dns_owner = var.region == var.regions[0] && length(var.hosts) > 0
+}
+
+module "dns" {
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.7.0"
+  count  = local.dns_owner ? 1 : 0
+
+  zone   = var.zone
+  hosts  = var.hosts
+  target = local.ingress
+  owner  = var.name
 }
