@@ -7,9 +7,11 @@ pipelines/
 ├── .github/workflows/
 │   ├── terraform-ci.yml       reusable: fmt, validate, terraform test of every root
 │   ├── terraform-deploy.yml   reusable: plan (PR) / apply (main, manual) per component × account × region
+│   ├── build-push.yml         reusable: app image build + Trivy scan (PR); also push to ECR (main)
 │   └── ci.yml                 this repo's own checks (actionlint + terraform-ci)
 └── terraform-runner/
-    └── ecs/                   generic root for every ECS app: calls the ecs-service pattern
+    ├── ecs/                   generic root for every ECS app: ecs-service + app-dns
+    └── cloudfront/            generic root for every static site: cloudfront-site + app-dns
 ```
 
 **All the logic lives here.** Other repos keep a caller of a few lines that says *when* to run and passes data (like the apply order), always pinned to a tag of this repo:
@@ -24,7 +26,8 @@ jobs:
 |---|---|
 | `terraform-modules`, `organization` | `terraform-ci` |
 | `infrastructure` | `terraform-ci` + `terraform-deploy` |
-| apps (`svc-*`) | `deploy-ecs` (next) |
+| apps with an image (`svc-*`) | `build-push` (then `deploy-ecs`, next) |
+| static sites (`web-*`) | `deploy-static` (next) |
 
 ## terraform-ci
 
@@ -66,6 +69,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v1.3.0` | `build-push` reusable workflow; CloudFront runner; ECS runner pulls the image from its own region's replica; modules `v0.8.0`. |
 | `v1.2.0` | ECS runner: the app creates its own public names (ADR-010, `app-dns`), only in the primary region's run; modules `v0.7.0`. |
 | `v1.1.2` | `terraform-deploy`: a target with no state file yet (never applied) no longer stops the plan step. |
 | `v1.1.1` | `terraform-deploy`: a plan with changes is no longer reported as failed (bash `-e` vs `-detailed-exitcode`); a never-deployed target that cannot be planned alone is **blocked**, not failed, and is planned at apply time. |
@@ -98,6 +102,14 @@ terraform plan \
 Checks at plan time: `runtime = "ecs"`, production with `min_capacity >= 2` and an `slo`, the region listed in `regions`, every secret existing in Secrets Manager (`jonomait/<env>/<name>/<secret>`). Staging runs on Fargate Spot, production on Fargate.
 
 State key: `<env>/<region>/apps/<name>`, in the bucket of the account being deployed.
+
+## build-push
+
+Builds the repo's `Dockerfile`, scans the image with **Trivy** (HIGH/CRITICAL with a fix fail) and, on `main`, pushes it to the platform registry (ECR in shared-services, created by `infrastructure/ecr`) as `<registry>/<repo>:<sha>` with the `github-actions-ecr-push` role. Pull requests only build and scan. The registry replicates every image to the other regions; the ECS runner swaps the region in the image address, so each region pulls from its own copy.
+
+## CloudFront runner
+
+`terraform-runner/cloudfront`: static sites (`runtime = "cloudfront"`). Creates the private bucket and the distribution (`cloudfront-site`) and the site's public names pointing at it (`app-dns`). Global: one run per account, in us-east-1, state key `<env>/global/apps/<name>`. The files are uploaded afterwards (S3 sync with long cache, HTML/CSS/JS with `no-cache`, CloudFront invalidation).
 
 ## Next
 
