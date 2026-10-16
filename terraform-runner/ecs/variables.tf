@@ -23,6 +23,7 @@ variable "image" {
 }
 
 # ----------------------------------------------------------- deploy/app.hcl
+# tflint-ignore: terraform_unused_declarations # part of the app contract
 variable "runtime" {
   type        = string
   description = "Runner selector; this one is ecs"
@@ -70,6 +71,7 @@ variable "slo" {
   default     = null
 }
 
+# tflint-ignore: terraform_unused_declarations # part of the app contract
 variable "cobertura_minima" {
   type        = number
   description = "Minimum coverage on changed lines (used by pr-check, not here)"
@@ -120,6 +122,7 @@ variable "cpu_target" {
   default     = 70
 }
 
+# tflint-ignore: terraform_unused_declarations # part of the app contract
 variable "fora_do_horario" {
   type        = bool
   description = "Scale staging to zero off-hours (not implemented yet)"

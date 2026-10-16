@@ -1,0 +1,17 @@
+# Weekly version bumps as pull requests: actions, reusable workflows (pipelines tags) and Terraform.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: terraform
+    directories: ["/terraform-runner/*"]
+    schedule:
+      interval: weekly
+    groups:
+      terraform:
+        patterns: ["*"]

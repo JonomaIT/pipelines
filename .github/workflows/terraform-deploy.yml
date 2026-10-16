@@ -1,25 +1,31 @@
 name: terraform-deploy
 
-# Reusable. Plans (pull request) or applies (main, manual) the Terraform components of the caller
-# repo: one job per component × account × region, found from the tfvars files.
+# Reusable. Plans and applies the Terraform components of the caller repo: one plan per
+# component × account × region, found from the tfvars files.
 #
 #   <component>/env/<account>/<region>.tfvars   regional       key <account>/<region>/<component>
 #   global/<name>/env/<account>.tfvars          global         key <account>/global/<name>
 #   cross-region/<name>/env/<account>.tfvars    cross-region   key <account>/cross-region/<name>
 #
-# Only what changed runs: a tfvars change runs that tfvars; a change in a component's code runs
-# every tfvars of it. Manual runs pick a target (or everything) and can destroy (reverse order).
+#   pull request   plan of what changed (read-only role) + the plans as a PR comment; "Plan result"
+#                  fails if any plan fails (make it a required check)
+#   main, manual   1. plan of every target, in parallel (read-only role), shown in the run summary
+#                  2. ONE approval per account (GitHub Environment), looking at those plans
+#                  3. apply of exactly those saved plans, in order; a target whose plan needed an
+#                     earlier target of the same run (e.g. ecs-cluster before its VPC exists) is
+#                     planned again at apply time, and that plan is shown in the summary
+#                  manual runs can pick a target and destroy (reverse order)
+#   drift          (schedule) plan of everything that is deployed; changes open or update an issue
 #
 # Conventions it relies on:
 #   - backends/<account>.tfbackend in the caller repo (state bucket of the account);
 #   - AWS_ACCOUNT_IDS org variable, JSON {"<account>": "<id>"}: accounts not listed (not
 #     bootstrapped yet) are skipped;
-#   - roles created by organization/bootstrap: github-actions-<repo>-plan (pull requests,
-#     read-only) and github-actions-<repo> (write; trusts only the GitHub Environment named after
-#     the account, which is where approvals are required).
+#   - roles from organization/bootstrap: github-actions-<repo>-plan (read-only; pull requests and
+#     main) and github-actions-<repo> (write; only inside the account's GitHub Environment).
 #
 #   jobs:
-#     terraform:
+#     deploy:
 #       uses: JonomaIT/pipelines/.github/workflows/terraform-deploy.yml@<tag>
 #       with:
 #         order: network ecs-cluster alb-shared
@@ -42,6 +48,11 @@ on:
         required: false
         default: false
         description: Manual runs - destroy the targets, in reverse order
+      drift:
+        type: boolean
+        required: false
+        default: false
+        description: Drift check - plan everything deployed, report changes in an issue, never apply
       primary-region:
         type: string
         required: false
@@ -59,7 +70,9 @@ on:
 
 permissions:
   contents: read
-  id-token: write # OIDC with AWS
+  id-token: write      # OIDC with AWS
+  pull-requests: write # plan comment
+  issues: write        # drift issue
 
 env:
   TF_IN_AUTOMATION: "true"
@@ -72,6 +85,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.find.outputs.matrix }}
+      accounts: ${{ steps.find.outputs.accounts }}
+      targets: ${{ steps.find.outputs.targets }}
       count: ${{ steps.find.outputs.count }}
     steps:
       - name: Checkout
@@ -83,7 +98,7 @@ jobs:
         id: find
         shell: python
         env:
-          EVENT: ${{ github.event_name }}
+          EVENT: ${{ inputs.drift && 'schedule' || github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
           ORDER: ${{ inputs.order }}
@@ -135,11 +150,12 @@ jobs:
                   "account_id": accounts.get(account, ""),
                   "region": region,
                   "key": key,
+                  "slug": key.replace("/", "__"),
               }
 
 
           selected = set()
-          if event == "workflow_dispatch":
+          if event in ("workflow_dispatch", "schedule"):
               if not target:
                   for c in order:
                       selected.update(tfvars_of(c))
@@ -187,22 +203,31 @@ jobs:
           if destroy:
               targets.reverse()
 
+          # One apply job per account (one approval each), running that account's targets in order.
+          accts = []
+          for t in targets:
+              if t["account"] not in [a["account"] for a in accts]:
+                  accts.append({"account": t["account"], "account_id": t["account_id"]})
+
           with open(os.environ.get("GITHUB_OUTPUT", "/dev/stdout"), "a") as out:
               out.write(f"matrix={json.dumps({'include': targets})}\n")
+              out.write(f"accounts={json.dumps({'include': accts})}\n")
+              out.write(f"targets={json.dumps(targets)}\n")
               out.write(f"count={len(targets)}\n")
           with open(os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout"), "a") as summary:
               summary.write(f"### {'Destroy' if destroy else 'Targets'} ({len(targets)})\n\n| # | Component | Account | Region | State key |\n|---|---|---|---|---|\n")
               for i, t in enumerate(targets, 1):
                   summary.write(f"| {i} | `{t['component']}` | {t['account']} | {t['region']} | `{t['key']}` |\n")
 
-  # Pull requests: read-only plan with the -plan role. A PR can change the workflow it runs with,
-  # so it never gets a role that writes.
+  # Read-only plan of every target, in parallel. On main a plan may fail only because it depends on
+  # a target applied earlier in this same run: it does not block, the apply job plans it again.
   plan:
     name: Plan · ${{ matrix.name }}
     needs: targets
-    if: github.event_name == 'pull_request' && needs.targets.outputs.count != '0'
+    if: needs.targets.outputs.count != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    continue-on-error: ${{ github.event_name != 'pull_request' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
@@ -231,35 +256,106 @@ jobs:
         run: terraform init -backend-config="$GITHUB_WORKSPACE/backends/${{ matrix.account }}.tfbackend" -backend-config="key=${{ matrix.key }}"
 
       - name: Terraform plan
-        run: terraform plan -lock-timeout=5m -no-color -var-file="${{ matrix.tfvars }}" -out=tfplan
+        env:
+          EVENT: ${{ github.event_name }}
+          DRIFT: ${{ inputs.drift }}
+          DESTROY_FLAG: ${{ inputs.destroy && '-destroy' || '' }}
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/out"; mkdir -p "$out"
+          if [ "$DRIFT" = "true" ] && [ -z "$(terraform state list 2>/dev/null)" ]; then
+            echo "not-deployed" > "$out/status"; echo "Not deployed: nothing to compare."; exit 0
+          fi
+          # shellcheck disable=SC2086
+          terraform plan -lock-timeout=5m -no-color -detailed-exitcode -var-file="${{ matrix.tfvars }}" $DESTROY_FLAG -out=tfplan
+          rc=$?
+          case $rc in
+            0) echo "no-changes" > "$out/status" ;;
+            2) echo "changes" > "$out/status" ;;
+            *) echo "failed" > "$out/status"; exit "$rc" ;;
+          esac
+          # Only runs that apply keep the plan file (artifacts live 1 day; secrets never go
+          # through Terraform variables, they stay in Secrets Manager).
+          if [ "$EVENT" != "pull_request" ] && [ "$DRIFT" != "true" ]; then cp tfplan "$out/tfplan"; fi
 
       - name: Plan summary
         if: always()
         run: |
+          out="$RUNNER_TEMP/out"; mkdir -p "$out"
+          [ -f "$out/status" ] || echo "failed" > "$out/status"
           {
-            echo "### ${{ matrix.name }}"
+            echo "#### ${{ matrix.name }} · $(cat "$out/status")"
             echo '```'
-            terraform show -no-color tfplan 2>/dev/null | grep -E '^\s+# |^Plan:|^No changes' || echo "No plan (see the logs)."
+            if [ -f tfplan ]; then terraform show -no-color tfplan | grep -E '^\s+# |^Plan:|^No changes' || true
+            elif grep -q not-deployed "$out/status"; then echo "not deployed"
+            else echo "no plan (see the job log)"; fi
             echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } > "$out/summary.md"
+          cat "$out/summary.md" >> "$GITHUB_STEP_SUMMARY"
 
-  # main and manual runs: plan + apply of that same plan, one target at a time, in order. The job
-  # declares the account's GitHub Environment: the write role only trusts that, and production
-  # waits for a required reviewer before the job starts.
-  apply:
-    name: ${{ inputs.destroy && 'Destroy' || 'Apply' }} · ${{ matrix.name }}
-    needs: targets
-    if: github.event_name != 'pull_request' && needs.targets.outputs.count != '0'
+      - name: Keep the plan for the apply
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plan-${{ matrix.slug }}
+          path: ${{ runner.temp }}/out/
+          retention-days: 1
+
+  # Stable name for a required check, and the plans as a single (updated) PR comment.
+  result:
+    name: Plan result
+    needs: [targets, plan]
+    if: always() && !inputs.drift
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 5
+    steps:
+      - name: Collect plans
+        if: needs.targets.outputs.count != '0'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: plan-*
+          path: plans
+
+      - name: Comment on the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          COUNT: ${{ needs.targets.outputs.count }}
+        run: |
+          marker='<!-- terraform-deploy -->'
+          {
+            echo "$marker"
+            echo "## Terraform plan"
+            if [ "$COUNT" = "0" ]; then echo "No component changed: nothing to plan."; fi
+            for f in plans/*/summary.md; do [ -f "$f" ] && cat "$f" && echo; done
+            echo "_Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}_"
+          } > comment.md
+          id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate -q ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n1)
+          if [ -n "$id" ]; then gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@comment.md >/dev/null
+          else gh api "repos/$REPO/issues/$PR/comments" -F body=@comment.md >/dev/null; fi
+
+      - name: Result
+        env:
+          TARGETS: ${{ needs.targets.result }}
+          PLAN: ${{ needs.plan.result }}
+        run: |
+          echo "targets: $TARGETS · plan: $PLAN"
+          [ "$TARGETS" = "success" ] && { [ "$PLAN" = "success" ] || [ "$PLAN" = "skipped" ]; }
+
+  # One job (one approval) per account; production waits for a required reviewer. The write role
+  # only trusts jobs inside the account's GitHub Environment.
+  apply:
+    name: ${{ inputs.destroy && 'Destroy' || 'Apply' }} · ${{ matrix.account }}
+    needs: [targets, plan]
+    if: always() && !inputs.drift && github.event_name != 'pull_request' && needs.targets.result == 'success' && needs.targets.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
     environment: ${{ matrix.account }}
     strategy:
-      fail-fast: true
-      max-parallel: 1
-      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
-    defaults:
-      run:
-        working-directory: ${{ matrix.component }}
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.targets.outputs.accounts) }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
@@ -278,21 +374,90 @@ jobs:
           role-to-assume: arn:aws:iam::${{ matrix.account_id }}:role/github-actions-${{ github.event.repository.name }}
           aws-region: ${{ inputs.primary-region }}
 
-      - name: Terraform init
-        run: terraform init -backend-config="$GITHUB_WORKSPACE/backends/${{ matrix.account }}.tfbackend" -backend-config="key=${{ matrix.key }}"
+      - name: Reviewed plans
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: plan-*
+          path: plans
 
-      - name: Terraform plan
-        run: terraform plan -lock-timeout=5m -no-color -var-file="${{ matrix.tfvars }}" ${{ inputs.destroy && '-destroy' || '' }} -out=tfplan
-
-      - name: Plan summary
+      - name: Apply in order
+        env:
+          TARGETS: ${{ needs.targets.outputs.targets }}
+          ACCOUNT: ${{ matrix.account }}
+          DESTROY_FLAG: ${{ inputs.destroy && '-destroy' || '' }}
         run: |
-          {
-            echo "### ${{ matrix.name }}"
-            echo '```'
-            terraform show -no-color tfplan | grep -E '^\s+# |^Plan:|^No changes' || true
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          while read -r t; do
+            name=$(jq -r .name <<<"$t"); comp=$(jq -r .component <<<"$t"); key=$(jq -r .key <<<"$t")
+            tfvars=$(jq -r .tfvars <<<"$t"); slug=$(jq -r .slug <<<"$t")
+            saved="$GITHUB_WORKSPACE/plans/plan-$slug/tfplan"
+            echo "::group::$name"
+            (
+              cd "$comp"
+              terraform init -reconfigure -backend-config="$GITHUB_WORKSPACE/backends/$ACCOUNT.tfbackend" -backend-config="key=$key"
+              if [ -f "$saved" ]; then
+                echo "Applying the reviewed plan."
+                plan="$saved"; how="reviewed plan"
+              else
+                echo "No reviewed plan (it needed a target applied earlier in this run): planning now."
+                # shellcheck disable=SC2086
+                terraform plan -lock-timeout=5m -no-color -var-file="$tfvars" $DESTROY_FLAG -out=tfplan
+                plan=tfplan; how="planned at apply time"
+              fi
+              {
+                echo "#### $name · $how"
+                echo '```'
+                terraform show -no-color "$plan" | grep -E '^\s+# |^Plan:|^No changes' || true
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              # Exactly this plan; if the state changed since it was made, Terraform refuses it.
+              terraform apply -lock-timeout=5m -no-color "$plan"
+            )
+            echo "::endgroup::"
+          done < <(jq -c --arg a "$ACCOUNT" '.[] | select(.account == $a)' <<<"$TARGETS")
 
-      # Applies exactly the plan above; if the state changed in between, Terraform refuses it.
-      - name: Terraform apply
-        run: terraform apply -lock-timeout=5m -no-color tfplan
+  # Drift: changes in deployed components open (or update) one issue; a clean run closes it.
+  drift:
+    name: Drift report
+    needs: [targets, plan]
+    if: always() && inputs.drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Collect plans
+        if: needs.targets.outputs.count != '0'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: plan-*
+          path: plans
+
+      - name: Open, update or close the drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          title="Terraform drift detected"
+          drifted=""; failed=""
+          for d in plans/*/; do
+            [ -f "$d/status" ] || continue
+            case $(cat "$d/status") in
+              changes) drifted="$drifted $d" ;;
+              failed) failed="$failed $d" ;;
+            esac
+          done
+          {
+            echo "Deployed components whose real state differs from the code (someone changed something outside Terraform, or a merge was not applied)."
+            echo
+            for d in $drifted $failed; do cat "$d/summary.md"; echo; done
+            echo "_Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}_"
+          } > body.md
+          cat body.md >> "$GITHUB_STEP_SUMMARY"
+          issue=$(gh issue list --state open --search "\"$title\" in:title" --json number -q '.[0].number')
+          if [ -n "$drifted$failed" ]; then
+            if [ -n "$issue" ]; then gh issue comment "$issue" --body-file body.md
+            else gh issue create --title "$title" --body-file body.md; fi
+            echo "::warning::Drift or failed plan in:$drifted$failed"
+          elif [ -n "$issue" ]; then
+            gh issue close "$issue" --comment "No drift on $(date -u +%F): closing."
+          fi

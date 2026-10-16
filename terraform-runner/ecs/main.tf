@@ -26,7 +26,7 @@ data "aws_secretsmanager_secret" "app" {
 }
 
 module "app" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//ecs-service?ref=v0.6.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//ecs-service?ref=v0.6.1"
 
   name        = var.name
   environment = var.environment
