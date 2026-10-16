@@ -25,12 +25,18 @@ data "aws_secretsmanager_secret" "app" {
   name     = "jonomait/${var.environment}/${var.name}/${each.value}"
 }
 
+# Images from the platform registry are replicated to every region: each region pulls from its
+# own copy (DR: a region never depends on another to start its tasks).
+locals {
+  image = replace(var.image, ".dkr.ecr.us-east-1.amazonaws.com/", ".dkr.ecr.${var.region}.amazonaws.com/")
+}
+
 module "app" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//ecs-service?ref=v0.7.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//ecs-service?ref=v0.8.0"
 
   name        = var.name
   environment = var.environment
-  image       = var.image
+  image       = local.image
   port        = var.port
   hosts       = var.hosts
 
@@ -58,7 +64,7 @@ locals {
 }
 
 module "dns" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.7.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.8.0"
   count  = local.dns_owner ? 1 : 0
 
   zone   = var.zone
