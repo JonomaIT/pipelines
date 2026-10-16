@@ -263,7 +263,7 @@ jobs:
           DESTROY_FLAG: ${{ inputs.destroy && '-destroy' || '' }}
         run: |
           set -uo pipefail
-          out="$RUNNER_TEMP/out"; mkdir -p "$out"
+          out="$RUNNER_TEMP/out/${{ matrix.slug }}"; mkdir -p "$out"
           # No state file yet (never applied) makes "state list" fail: that also means not deployed.
           deployed=$(terraform state list 2>/dev/null | head -n1 || true)
           if [ "$DRIFT" = "true" ] && [ -z "$deployed" ]; then
@@ -295,7 +295,7 @@ jobs:
       - name: Plan summary
         if: always()
         run: |
-          out="$RUNNER_TEMP/out"; mkdir -p "$out"
+          out="$RUNNER_TEMP/out/${{ matrix.slug }}"; mkdir -p "$out"
           [ -f "$out/status" ] || echo "failed" > "$out/status"
           {
             echo "#### ${{ matrix.name }} · $(cat "$out/status")"
@@ -308,6 +308,8 @@ jobs:
           } > "$out/summary.md"
           cat "$out/summary.md" >> "$GITHUB_STEP_SUMMARY"
 
+      # The files go inside a folder named after the target: whether the download extracts one
+      # artifact or several, the consumers find them by that name.
       - name: Keep the plan for the apply
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -344,7 +346,7 @@ jobs:
             echo "$marker"
             echo "## Terraform plan"
             if [ "$COUNT" = "0" ]; then echo "No component changed: nothing to plan."; fi
-            for f in plans/*/summary.md; do [ -f "$f" ] && cat "$f" && echo; done
+            find plans -name summary.md 2>/dev/null | sort | while read -r f; do cat "$f"; echo; done
             echo "_Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}_"
           } > comment.md
           id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate -q ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n1)
@@ -405,12 +407,12 @@ jobs:
           while read -r t; do
             name=$(jq -r .name <<<"$t"); comp=$(jq -r .component <<<"$t"); key=$(jq -r .key <<<"$t")
             tfvars=$(jq -r .tfvars <<<"$t"); slug=$(jq -r .slug <<<"$t")
-            saved="$GITHUB_WORKSPACE/plans/plan-$slug/tfplan"
+            saved=$(find "$GITHUB_WORKSPACE/plans" -path "*/$slug/tfplan" 2>/dev/null | head -n1)
             echo "::group::$name"
             (
               cd "$comp"
               terraform init -reconfigure -backend-config="$GITHUB_WORKSPACE/backends/$ACCOUNT.tfbackend" -backend-config="key=$key"
-              if [ -f "$saved" ]; then
+              if [ -n "$saved" ] && [ -f "$saved" ]; then
                 echo "Applying the reviewed plan."
                 plan="$saved"; how="reviewed plan"
               else
@@ -454,13 +456,13 @@ jobs:
           set -uo pipefail
           title="Terraform drift detected"
           drifted=""; failed=""
-          for d in plans/*/; do
-            [ -f "$d/status" ] || continue
-            case $(cat "$d/status") in
+          while read -r st; do
+            d=$(dirname "$st")
+            case $(cat "$st") in
               changes) drifted="$drifted $d" ;;
               failed) failed="$failed $d" ;;
             esac
-          done
+          done < <(find plans -name status 2>/dev/null | sort)
           {
             echo "Deployed components whose real state differs from the code (someone changed something outside Terraform, or a merge was not applied)."
             echo

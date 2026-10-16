@@ -69,6 +69,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v1.3.1` | `terraform-deploy`: with a single target, the downloaded plan was extracted without its folder, so the PR comment came out empty and the apply planned again instead of applying the reviewed plan. Plans now live in a folder named after the target. |
 | `v1.3.0` | `build-push` reusable workflow; CloudFront runner; ECS runner pulls the image from its own region's replica; modules `v0.8.0`. |
 | `v1.2.0` | ECS runner: the app creates its own public names (ADR-010, `app-dns`), only in the primary region's run; modules `v0.7.0`. |
 | `v1.1.2` | `terraform-deploy`: a target with no state file yet (never applied) no longer stops the plan step. |
