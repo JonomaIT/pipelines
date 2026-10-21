@@ -1,6 +1,6 @@
 # pipelines
 
-What turns an app's values into a running app. Apps never write Terraform: they bring `deploy/app.hcl` and `deploy/env/<account>.tfvars`, and the runner of their `runtime` does the rest.
+What turns an app's values into a running app. Apps never write Terraform: they bring `deploy/app.hcl` and `deploy/env/<account>.tfvars` (and `deploy/data.hcl` when they keep data), and the runners do the rest.
 
 ```
 pipelines/
@@ -11,7 +11,8 @@ pipelines/
 │   └── ci.yml                 this repo's own checks (actionlint + terraform-ci)
 └── terraform-runner/
     ├── ecs/                   generic root for every ECS app: ecs-service + app-dns
-    └── cloudfront/            generic root for every static site: cloudfront-site + app-dns
+    ├── cloudfront/            generic root for every static site: cloudfront-site + app-dns
+    └── data/                  generic root for every app's data (deploy/data.hcl): tables, topics, queues, buckets
 ```
 
 **All the logic lives here.** Other repos keep a caller of a few lines that says *when* to run and passes data (like the apply order), always pinned to a tag of this repo:
@@ -69,6 +70,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v1.4.0` | **ADR-011, the app declares its data.** New data runner (`terraform-runner/data`, `deploy/data.hcl`). ECS runner: injects the app's data parameters as environment variables, attaches its data-access policy, passes `REGION_STATE_PARAMETER` (ADR-012) and refuses an `env` that shadows them; modules `v0.9.0`. |
 | `v1.3.1` | `terraform-deploy`: with a single target, the downloaded plan was extracted without its folder, so the PR comment came out empty and the apply planned again instead of applying the reviewed plan. Plans now live in a folder named after the target. |
 | `v1.3.0` | `build-push` reusable workflow; CloudFront runner; ECS runner pulls the image from its own region's replica; modules `v0.8.0`. |
 | `v1.2.0` | ECS runner: the app creates its own public names (ADR-010, `app-dns`), only in the primary region's run; modules `v0.7.0`. |
@@ -96,13 +98,62 @@ terraform plan \
 |---|---|
 | the pipeline | `environment` (GitHub Environment), `region` (one job per region in `regions`), `image` (built once, promoted) |
 | `deploy/app.hcl` | `runtime`, `name`, `port`, `health_check_path`, `env`, `secrets`, `slo`, `cobertura_minima` |
+| the data runner | the app's data variables and data-access policy (when it has `deploy/data.hcl`) |
 | `deploy/env/<account>.tfvars` | `regions`, `hosts`, `cpu`, `memory`, `min_capacity`, `max_capacity`, `cpu_target`, `fora_do_horario` |
 
 **Public names (ADR-010):** the run of the primary region (first in `regions`) creates each `hosts` entry as a proxied CNAME to the environment's entry (`ingress.<zone>` in production, `ingress-<env>.<zone>` elsewhere), with the `app-dns` pattern: owner in the record comment, reserved names and names owned by another app refused. Needs `CLOUDFLARE_API_TOKEN` (in the app pipeline: a token that can only edit DNS).
 
-Checks at plan time: `runtime = "ecs"`, production with `min_capacity >= 2` and an `slo`, the region listed in `regions`, every secret existing in Secrets Manager (`jonomait/<env>/<name>/<secret>`). Staging runs on Fargate Spot, production on Fargate.
+Checks at plan time: `runtime = "ecs"`, production with `min_capacity >= 2` and an `slo`, the region listed in `regions`, every secret existing in Secrets Manager (`jonomait/<env>/<name>/<secret>`), `env` not shadowing a variable the platform injects. Staging runs on Fargate Spot, production on Fargate.
+
+**What the app receives besides its own `env`:**
+
+| Variable | From |
+|---|---|
+| `TABLE_*`, `TOPIC_*`, `QUEUE_*`, `BUCKET_*` | its data, published by the data runner in this region (`/jonomait/<env>/<name>/env/*`); the task role gets the `…-data-access` policy (`/jonomait/<env>/<name>/iam/*`) |
+| `REGION_STATE_PARAMETER` | the platform: parameter holding `ACTIVE` or `PASSIVE` for this region (ADR-012); the task role may read it |
 
 State key: `<env>/<region>/apps/<name>`, in the bucket of the account being deployed.
+
+## Data runner
+
+`terraform-runner/data`: the data an app keeps, declared in `deploy/data.hcl` by logical name (ADR-011). One state per app and account, **apart from the app's** (`<env>/cross-region/data/<name>`): recreating or removing the app never touches its data. Every resource is created in every region of the app by the data modules of `terraform-modules`, replication included.
+
+```hcl
+# deploy/data.hcl of a worker
+tables = {
+  idempotency = { hash_key = "id", ttl_attribute = "expires_at" }
+}
+queues = {
+  pedidos = { subscribe = ["svc-pedidos/pedido-criado"] } # another app's topic, every region
+}
+buckets = {
+  notas = {} # replicated both ways
+}
+uses = {
+  "svc-pedidos/table/pedidos" = "read-write" # another app's table
+}
+```
+
+```bash
+cd terraform-runner/data
+terraform init -backend-config=<account backend> -backend-config=key=production/cross-region/data/svc-faturamento
+terraform plan -var-file=../../../svc-faturamento/deploy/data.hcl \
+  -var environment=production -var name=svc-faturamento -var 'regions=["us-east-1","sa-east-1"]'
+```
+
+| The app declares | It gets, in every region | Access |
+|---|---|---|
+| `tables` | DynamoDB global table, on demand, PITR, deletion protection | read-write |
+| `topics` | SNS topic | publish |
+| `queues` | SQS queue + DLQ, subscribed to `subscribe` (own `"<topic>"` or `"<app>/<topic>"`) of every region | consume and send |
+| `buckets` | S3 bucket `<name>-<region>`, replicated both ways | read-write |
+| `uses` | nothing new: access to another app's resource, which must exist | `read`, `write` or `read-write` |
+
+Names are `jonomait-<env>-<app>-<logical name>`. The **`…-data-access`** policy lists only those actions on those ARNs (no wildcards, no `Scan`), and the plan shows it in the `permissions` output. Each resource is published as `/jonomait/<env>/<app>/env/<KIND>_<NAME>` and injected by the ECS runner (`TABLE_IDEMPOTENCY`, `QUEUE_PEDIDOS`, `BUCKET_NOTAS`, `TABLE_PEDIDOS`).
+
+Refused at plan time, with a message saying what to fix: two resources giving the same variable, a queue subscribing to an own topic not in `topics`, `uses` naming the app itself or a resource that does not exist, malformed names.
+
+`allow_destroy` (labs only, set by the platform): turns deletion protection off and lets buckets with objects be destroyed. Order: the data of an app before the app; a producer's data before its consumers'; on destroy, the reverse.
 
 ## build-push
 
