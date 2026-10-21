@@ -70,6 +70,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v1.4.2` | `terraform-deploy`: the apply and drift jobs use `!cancelled()` instead of `always()`, so a cancelled run no longer leaves apply jobs waiting at the approval gate (they blocked the next run through `concurrency`). |
 | `v1.4.1` | Data runner: parameters written as `insecure_value` (they are names, URLs and ARNs, not secrets), so plans show what the app will receive. |
 | `v1.4.0` | **ADR-011, the app declares its data.** New data runner (`terraform-runner/data`, `deploy/data.hcl`). ECS runner: injects the app's data parameters as environment variables, attaches its data-access policy, passes `REGION_STATE_PARAMETER` (ADR-012) and refuses an `env` that shadows them; modules `v0.9.0`. |
 | `v1.3.1` | `terraform-deploy`: with a single target, the downloaded plan was extracted without its folder, so the PR comment came out empty and the apply planned again instead of applying the reviewed plan. Plans now live in a folder named after the target. |
