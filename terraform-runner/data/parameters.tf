@@ -42,20 +42,20 @@ locals {
 resource "aws_ssm_parameter" "env" {
   for_each = { for pair in setproduct(keys(local.env), var.regions) : "${pair[1]}/${pair[0]}" => { region = pair[1], key = pair[0] } }
 
-  region      = each.value.region
-  name        = "${local.parameters}/env/${each.value.key}"
-  description = "Injected into ${var.name} as ${each.value.key} (data runner, ADR-011)"
-  type        = "String"
-  value       = local.env[each.value.key][each.value.region]
+  region         = each.value.region
+  name           = "${local.parameters}/env/${each.value.key}"
+  description    = "Injected into ${var.name} as ${each.value.key} (data runner, ADR-011)"
+  type           = "String"
+  insecure_value = local.env[each.value.key][each.value.region] # not a secret: readable in plans
 }
 
 # The ECS runner attaches this policy to the task role in every region.
 resource "aws_ssm_parameter" "data_access" {
   for_each = length(local.statements) > 0 ? toset(var.regions) : toset([])
 
-  region      = each.value
-  name        = "${local.parameters}/iam/data-access"
-  description = "Data-access policy of ${var.name}, attached to its task role by the ECS runner (ADR-011)"
-  type        = "String"
-  value       = aws_iam_policy.data_access[0].arn
+  region         = each.value
+  name           = "${local.parameters}/iam/data-access"
+  description    = "Data-access policy of ${var.name}, attached to its task role by the ECS runner (ADR-011)"
+  type           = "String"
+  insecure_value = aws_iam_policy.data_access[0].arn
 }
