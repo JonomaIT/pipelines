@@ -9,7 +9,7 @@
 # The files are uploaded afterwards (aws s3 sync to the output bucket + invalidation).
 
 module "site" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//cloudfront-site?ref=v0.8.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//cloudfront-site?ref=v0.9.0"
 
   name          = var.name
   environment   = var.environment
@@ -20,7 +20,7 @@ module "site" {
 }
 
 module "dns" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.8.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.9.0"
 
   zone   = var.zone
   hosts  = var.hosts

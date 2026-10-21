@@ -4,6 +4,13 @@ mock_provider "aws" {
   mock_data "aws_region" {
     defaults = { region = "us-east-1" }
   }
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "111111111111" }
+  }
+  # No deploy/data.hcl: nothing published for the app.
+  mock_data "aws_ssm_parameters_by_path" {
+    defaults = { names = [], values = [], arns = [], types = [] }
+  }
   mock_data "aws_vpc" {
     defaults = { id = "vpc-12345678", cidr_block = "10.10.0.0/16" }
   }
@@ -94,6 +101,46 @@ run "secondary_region_does_not_touch_dns" {
     condition     = length(module.dns) == 0
     error_message = "Only the primary region's run owns the DNS names (they are global)."
   }
+}
+
+run "data_is_injected_and_granted" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.data_env
+    values = {
+      names  = ["/jonomait/staging/svc-hello/env/TABLE_PEDIDOS", "/jonomait/staging/svc-hello/env/QUEUE_PEDIDOS"]
+      values = ["jonomait-stg-svc-hello-pedidos", "https://sqs.us-east-1.amazonaws.com/111111111111/jonomait-stg-svc-hello-pedidos"]
+    }
+  }
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.data_iam
+    values = {
+      names  = ["/jonomait/staging/svc-hello/iam/data-access"]
+      values = ["arn:aws:iam::111111111111:policy/jonomait-stg-svc-hello-data-access"]
+    }
+  }
+
+  assert {
+    condition     = local.data_env["TABLE_PEDIDOS"] == "jonomait-stg-svc-hello-pedidos" && length(local.data_env) == 2
+    error_message = "Every parameter under /jonomait/<env>/<app>/env becomes an environment variable."
+  }
+
+  assert {
+    condition     = length(local.data_policies) == 1 && contains(local.data_policies, "arn:aws:iam::111111111111:policy/jonomait-stg-svc-hello-data-access")
+    error_message = "The data-access policy goes to the task role."
+  }
+}
+
+run "app_env_cannot_shadow_platform_variables" {
+  command = plan
+
+  variables {
+    env = { REGION_STATE_PARAMETER = "/somewhere/else" }
+  }
+
+  expect_failures = [terraform_data.env_contract]
 }
 
 run "production_needs_two_tasks" {
