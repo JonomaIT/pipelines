@@ -366,7 +366,8 @@ jobs:
   apply:
     name: ${{ inputs.destroy && 'Destroy' || 'Apply' }} · ${{ matrix.account }}
     needs: [targets, plan]
-    if: always() && !inputs.drift && github.event_name != 'pull_request' && needs.targets.result == 'success' && needs.targets.outputs.count != '0'
+    # !cancelled(), not always(): a cancelled run must not reach the approval gate.
+    if: ${{ !cancelled() && !inputs.drift && github.event_name != 'pull_request' && needs.targets.result == 'success' && needs.targets.outputs.count != '0' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment: ${{ matrix.account }}
@@ -437,7 +438,7 @@ jobs:
   drift:
     name: Drift report
     needs: [targets, plan]
-    if: always() && inputs.drift
+    if: ${{ !cancelled() && inputs.drift }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
