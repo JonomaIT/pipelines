@@ -15,6 +15,11 @@ variable "environment" {
 variable "region" {
   type        = string
   description = "Region of this run (the pipeline runs one job per region in var.regions)"
+
+  validation {
+    condition     = contains(var.regions, var.region)
+    error_message = "region ${var.region} is not in the app's regions (deploy/env/<account>.tfvars): ${jsonencode(var.regions)}."
+  }
 }
 
 variable "image" {
@@ -68,6 +73,7 @@ variable "secrets" {
   default     = []
 }
 
+# tflint-ignore: terraform_unused_declarations # part of the app contract; only validated until the alerts exist
 variable "slo" {
   type = object({
     disponibilidade = number
@@ -75,6 +81,11 @@ variable "slo" {
   })
   description = "Availability and latency objectives (required in production; alerts come later, see Observabilidade)"
   default     = null
+
+  validation {
+    condition     = var.environment != "production" || var.slo != null
+    error_message = "production apps must declare slo in deploy/app.hcl, e.g. slo = { disponibilidade = 99.5, latencia_p95_ms = 500 }."
+  }
 }
 
 # tflint-ignore: terraform_unused_declarations # part of the app contract
