@@ -4,20 +4,9 @@
 #   terraform init -backend-config=<account backend> -backend-config=key=<env>/<region>/apps/<name>
 #   terraform apply -var-file=app.hcl -var-file=<env>.tfvars \
 #     -var environment=<env> -var region=<region> -var image=<image>
-
-check "region_is_listed" {
-  assert {
-    condition     = contains(var.regions, var.region)
-    error_message = "region ${var.region} is not in the app's regions ${jsonencode(var.regions)}."
-  }
-}
-
-check "production_has_slo" {
-  assert {
-    condition     = var.environment != "production" || var.slo != null
-    error_message = "production apps must declare slo in deploy/app.hcl."
-  }
-}
+#
+# The contract rules (region listed, production with slo and two tasks) are variable validations:
+# they stop the plan. A check block would only warn and let the deploy through.
 
 # Secrets are referenced by name; a missing one fails the plan with a clear error.
 data "aws_secretsmanager_secret" "app" {

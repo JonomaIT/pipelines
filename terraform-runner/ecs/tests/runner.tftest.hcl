@@ -155,6 +155,28 @@ run "production_needs_two_tasks" {
   expect_failures = [var.min_capacity]
 }
 
+run "production_needs_an_slo" {
+  command = plan
+
+  variables {
+    environment  = "production"
+    min_capacity = 2
+  }
+
+  expect_failures = [var.slo]
+}
+
+run "region_must_be_listed" {
+  command = plan
+
+  variables {
+    region  = "sa-east-1"
+    regions = ["us-east-1"]
+  }
+
+  expect_failures = [var.region]
+}
+
 run "other_runtime_is_rejected" {
   command = plan
 
