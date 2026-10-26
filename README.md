@@ -86,14 +86,14 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 ```bash
 cd terraform-runner/ecs
-export AWS_PROFILE=jonomait-staging
+export AWS_PROFILE=jonomait-production
 terraform init -reconfigure \
-  -backend-config=bucket=jonomait-staging-tfstate -backend-config=region=us-east-1 \
-  -backend-config=key=staging/us-east-1/apps/svc-hello
+  -backend-config=bucket=jonomait-production-tfstate -backend-config=region=us-east-1 \
+  -backend-config=key=production/us-east-1/apps/svc-sales-api
 terraform plan \
-  -var-file=../../../svc-hello/deploy/app.hcl \
-  -var-file=../../../svc-hello/deploy/env/staging.tfvars \
-  -var environment=staging -var region=us-east-1 \
+  -var-file=../../../svc-sales-api/deploy/app.hcl \
+  -var-file=../../../svc-sales-api/deploy/env/production.tfvars \
+  -var environment=production -var region=us-east-1 \
   -var image=<image>
 ```
 
