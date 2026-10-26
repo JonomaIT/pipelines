@@ -89,10 +89,10 @@ cd terraform-runner/ecs
 export AWS_PROFILE=jonomait-staging
 terraform init -reconfigure \
   -backend-config=bucket=jonomait-staging-tfstate -backend-config=region=us-east-1 \
-  -backend-config=key=staging/us-east-1/apps/svc-hello
+  -backend-config=key=staging/us-east-1/apps/svc-sales-api
 terraform plan \
-  -var-file=../../../svc-hello/deploy/app.hcl \
-  -var-file=../../../svc-hello/deploy/env/staging.tfvars \
+  -var-file=../../../svc-sales-api/deploy/app.hcl \
+  -var-file=../../../svc-sales-api/deploy/env/staging.tfvars \
   -var environment=staging -var region=us-east-1 \
   -var image=<image>
 ```
