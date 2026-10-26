@@ -30,6 +30,24 @@ mock_provider "aws" {
   }
 }
 
+# What the platform publishes (infrastructure global/dns-cloudflare): the regions it runs, no lab.
+override_data {
+  target = data.aws_ssm_parameters_by_path.platform
+  values = {
+    names  = ["/jonomait/production/platform/zone", "/jonomait/production/platform/regions", "/jonomait/production/platform/allow-destroy"]
+    values = ["joshuel.com.br", "us-east-1,sa-east-1", "false"]
+  }
+}
+
+# What svc-pedidos shares with svc-faturamento (its own data runner publishes it).
+override_data {
+  target = data.aws_ssm_parameters_by_path.shares
+  values = {
+    names  = ["/jonomait/production/svc-pedidos/shares/topic/pedido-criado/svc-faturamento", "/jonomait/production/svc-pedidos/shares/table/pedidos/svc-faturamento"]
+    values = ["read", "read-write"]
+  }
+}
+
 # A worker: consumes another app's topic, keeps an idempotency table and a replicated bucket, and
 # updates the other app's table.
 variables {
@@ -180,4 +198,124 @@ run "malformed_uses_is_rejected" {
   }
 
   expect_failures = [var.uses]
+}
+
+# ------------------------------------------------------------- ADR-014 guardrails
+
+run "data_protection_follows_the_platform" {
+  command = plan
+
+  assert {
+    condition     = local.allow_destroy == false
+    error_message = "Outside a lab, app data keeps deletion protection; deploy/data.hcl cannot change it."
+  }
+}
+
+run "lab_platform_may_allow_destroy" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.platform
+    values = {
+      names  = ["/jonomait/production/platform/regions", "/jonomait/production/platform/allow-destroy"]
+      values = ["us-east-1,sa-east-1", "true"]
+    }
+  }
+
+  assert {
+    condition     = local.allow_destroy == true
+    error_message = "Only the platform's parameter turns deletion protection off (labs)."
+  }
+}
+
+run "missing_platform_parameters_are_refused" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.platform
+    values = { names = [], values = [] }
+  }
+
+  expect_failures = [terraform_data.platform]
+}
+
+run "region_the_platform_does_not_run_is_refused" {
+  command = plan
+
+  variables {
+    regions = ["us-east-1", "eu-west-1"]
+  }
+
+  expect_failures = [terraform_data.platform]
+}
+
+run "too_many_resources_need_an_exception" {
+  command = plan
+
+  variables {
+    topics = [for i in range(11) : "topico-${i}"]
+  }
+
+  expect_failures = [terraform_data.platform]
+}
+
+run "using_unshared_data_is_refused" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.shares
+    values = { names = [], values = [] }
+  }
+
+  expect_failures = [terraform_data.shares]
+}
+
+run "share_with_less_access_is_refused" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.shares
+    values = {
+      names  = ["/jonomait/production/svc-pedidos/shares/topic/pedido-criado/svc-faturamento", "/jonomait/production/svc-pedidos/shares/table/pedidos/svc-faturamento"]
+      values = ["read", "read"]
+    }
+  }
+
+  expect_failures = [terraform_data.shares]
+}
+
+run "owner_publishes_its_shares" {
+  command = plan
+
+  variables {
+    name    = "svc-pedidos"
+    tables  = { pedidos = { hash_key = "id" } }
+    topics  = ["pedido-criado"]
+    queues  = {}
+    buckets = {}
+    uses    = {}
+    shares = {
+      "table/pedidos"       = { "svc-faturamento" = "read-write" }
+      "topic/pedido-criado" = { "svc-faturamento" = "read" }
+    }
+  }
+
+  assert {
+    condition = (
+      length(aws_ssm_parameter.share) == 4 &&
+      aws_ssm_parameter.share["sa-east-1/table/pedidos/svc-faturamento"].name == "/jonomait/production/svc-pedidos/shares/table/pedidos/svc-faturamento" &&
+      aws_ssm_parameter.share["sa-east-1/table/pedidos/svc-faturamento"].insecure_value == "read-write"
+    )
+    error_message = "Each share is published in every region, where the consumer's data runner reads it."
+  }
+}
+
+run "sharing_what_the_app_does_not_own_is_refused" {
+  command = plan
+
+  variables {
+    shares = { "table/nao-existe" = { "svc-pedidos" = "read" } }
+  }
+
+  expect_failures = [terraform_data.shares]
 }

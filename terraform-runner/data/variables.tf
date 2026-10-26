@@ -33,12 +33,6 @@ variable "regions" {
   }
 }
 
-variable "allow_destroy" {
-  type        = bool
-  description = "Labs only (set by the platform, never by the app): turn off deletion protection and let buckets with objects be destroyed"
-  default     = false
-}
-
 # ----------------------------------------------------------- deploy/data.hcl
 variable "tables" {
   type = map(object({
@@ -88,5 +82,20 @@ variable "uses" {
       for k, access in var.uses : can(regex("^[a-z][a-z0-9-]+/(table|topic|queue|bucket)/[a-zA-Z0-9_-]+$", k)) && contains(["read", "write", "read-write"], access)
     ])
     error_message = "uses entries are \"<app>/<table|topic|queue|bucket>/<name>\" = \"read\" | \"write\" | \"read-write\"."
+  }
+}
+
+variable "shares" {
+  type        = map(map(string))
+  description = "Who may use this app's resources (ADR-014): \"<table|topic|queue|bucket>/<name>\" = { \"<app>\" = \"read\" | \"write\" | \"read-write\" }. Another app's uses (and its queues' subscribe) work only with a matching share"
+  default     = {}
+
+  validation {
+    condition = alltrue(flatten([
+      for k, apps in var.shares : [
+        for app, level in apps : can(regex("^(table|topic|queue|bucket)/[a-z0-9][a-z0-9-]*[a-z0-9]$", k)) && can(regex("^[a-z][a-z0-9-]{1,30}[a-z0-9]$", app)) && contains(["read", "write", "read-write"], level)
+      ]
+    ]))
+    error_message = "shares entries are \"<table|topic|queue|bucket>/<name>\" = { \"<app>\" = \"read\" | \"write\" | \"read-write\" }."
   }
 }

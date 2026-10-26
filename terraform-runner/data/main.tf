@@ -93,7 +93,7 @@ module "table" {
   range_key           = each.value.range_key
   range_key_type      = each.value.range_key_type
   ttl_attribute       = each.value.ttl_attribute
-  deletion_protection = !var.allow_destroy
+  deletion_protection = !local.allow_destroy
 }
 
 module "topic" {
@@ -141,7 +141,7 @@ module "bucket" {
   regions         = var.regions
   replicate       = each.value.replicate
   noncurrent_days = each.value.noncurrent_days
-  force_destroy   = var.allow_destroy
+  force_destroy   = local.allow_destroy
 }
 
 # Resources of other apps must exist (checked in the primary region) before they can be granted.

@@ -21,6 +21,15 @@ mock_provider "cloudflare" {
   }
 }
 
+# What the platform publishes (infrastructure global/dns-cloudflare).
+override_data {
+  target = data.aws_ssm_parameters_by_path.platform
+  values = {
+    names  = ["/jonomait/production/platform/zone", "/jonomait/production/platform/regions"]
+    values = ["joshuel.com.br", "us-east-1,sa-east-1"]
+  }
+}
+
 variables {
   environment = "production"
   runtime     = "cloudfront"
@@ -45,4 +54,24 @@ run "other_runtime_is_rejected" {
   }
 
   expect_failures = [var.runtime]
+}
+
+run "zone_comes_from_the_platform" {
+  command = plan
+
+  assert {
+    condition     = local.zone == "joshuel.com.br"
+    error_message = "The zone comes from the platform's parameters, not from the site's files."
+  }
+}
+
+run "missing_platform_parameters_are_refused" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.platform
+    values = { names = [], values = [] }
+  }
+
+  expect_failures = [terraform_data.platform]
 }

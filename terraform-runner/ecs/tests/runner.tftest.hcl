@@ -53,6 +53,15 @@ mock_provider "cloudflare" {
   }
 }
 
+# What the platform publishes (infrastructure global/dns-cloudflare).
+override_data {
+  target = data.aws_ssm_parameters_by_path.platform
+  values = {
+    names  = ["/jonomait/staging/platform/zone", "/jonomait/staging/platform/regions", "/jonomait/staging/platform/allow-destroy"]
+    values = ["joshuel.com.br", "us-east-1,sa-east-1", "false"]
+  }
+}
+
 variables {
   # pipeline
   environment = "staging"
@@ -216,4 +225,71 @@ run "other_runtime_is_rejected" {
   }
 
   expect_failures = [var.runtime]
+}
+
+# ------------------------------------------------------------- ADR-014 guardrails
+
+run "names_live_in_the_platform_zone" {
+  command = plan
+
+  assert {
+    condition     = local.zone == "joshuel.com.br" && local.ingress == "ingress-stg.joshuel.com.br"
+    error_message = "The zone comes from the platform's parameters, not from the app's files."
+  }
+}
+
+run "missing_platform_parameters_are_refused" {
+  command = plan
+
+  # Without names, so only the platform check speaks (the DNS module would also refuse them).
+  variables {
+    hosts = []
+  }
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.platform
+    values = { names = [], values = [] }
+  }
+
+  expect_failures = [terraform_data.platform]
+}
+
+run "region_the_platform_does_not_run_is_refused" {
+  command = plan
+
+  variables {
+    regions = ["us-east-1", "eu-west-1"]
+  }
+
+  expect_failures = [terraform_data.platform]
+}
+
+run "bigger_than_the_environment_limits_is_refused" {
+  command = plan
+
+  variables {
+    cpu          = 2048
+    memory       = 4096
+    max_capacity = 5
+  }
+
+  expect_failures = [terraform_data.platform]
+}
+
+run "production_allows_more_than_staging" {
+  command = plan
+
+  variables {
+    environment  = "production"
+    cpu          = 2048
+    memory       = 4096
+    min_capacity = 2
+    max_capacity = 10
+    slo          = { availability = 99.5, latency_p95_ms = 500 }
+  }
+
+  assert {
+    condition     = local.limits.max_capacity == 10
+    error_message = "Each environment has its own limits (pipelines/policies/limits.json)."
+  }
 }

@@ -1,0 +1,17 @@
+name: contract-check
+description: >-
+  Checks an app's deploy/ against the app contract (ADR-014) before anything runs: only contract
+  fields, none of the platform's, name = repo name. Runs contract/check.py of this repo.
+inputs:
+  repo-name:
+    description: The repo's name, which the app's name must match
+    required: false
+    default: ${{ github.event.repository.name }}
+runs:
+  using: composite
+  steps:
+    - name: App contract (deploy/)
+      shell: bash
+      env:
+        REPO_NAME: ${{ inputs.repo-name }}
+      run: python3 "$GITHUB_ACTION_PATH/../../../contract/check.py" --repo-name "$REPO_NAME" .

@@ -71,6 +71,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v2.2.0` | **Guardrails of self-service (ADR-014).** Values the platform decides (zone, regions, whether app data may be destroyed) are read from `/jonomait/<env>/platform/*` (written by `infrastructure` `global/dns-cloudflare`), never from the app's files: `zone` and `allow_destroy` are no longer variables. Limits per environment (`policies/limits.json`: CPU, memory, tasks, data resources per kind) with dated exceptions. Data of another app needs its owner's consent: `shares` in the owner's `deploy/data.hcl`, checked for `uses` and for subscriptions. `contract-check` action (in `build-static` and `build-push`): only contract fields in `deploy/`, none of the platform's, `name` = repo name. The CloudFront runner's modules now have `count` (`moved` blocks keep existing states). |
 | `v2.1.0` | `build-static` reusable workflow: static sites (`web-*` with a `package.json`) are linted, type-checked, tested and built the same way, the `package.json` scripts being the interface; Trivy scans the lockfile; on `main` the built folder is kept as the `site` artifact. |
 | `v2.0.0` | **Contract v2: every field in English** (breaking). In `deploy/app.hcl`: `slo = { availability, latency_p95_ms }` (was `disponibilidade`, `latencia_p95_ms`), `min_coverage` (was `cobertura_minima`); in `deploy/env/<account>.tfvars`: `off_hours` (was `fora_do_horario`). The old names are refused at plan time with a message giving the new one; they leave in `v3`. `slo` needs both objectives. |
 | `v1.4.3` | ECS runner: "production needs an `slo`" and "the region must be in `regions`" now **stop the plan** (variable validations). They were `check` blocks, which Terraform only reports as warnings, so a deploy breaking them went through. Tests prove both refusals. |
@@ -159,7 +160,41 @@ Names are `jonomait-<env>-<app>-<logical name>`. The **`…-data-access`** polic
 
 Refused at plan time, with a message saying what to fix: two resources giving the same variable, a queue subscribing to an own topic not in `topics`, `uses` naming the app itself or a resource that does not exist, malformed names.
 
-`allow_destroy` (labs only, set by the platform): turns deletion protection off and lets buckets with objects be destroyed. Order: the data of an app before the app; a producer's data before its consumers'; on destroy, the reverse.
+**Another app's data needs its owner's consent** (ADR-014). The owner lists who may use each resource in its own `deploy/data.hcl`, and its data runner publishes it (`/jonomait/<env>/<app>/shares/<kind>/<name>/<consumer>`). A consumer's `uses`, and a queue's `subscribe` to another app's topic (a read), work only with a share of at least that access:
+
+```hcl
+# deploy/data.hcl of the owner (svc-pedidos)
+shares = {
+  "table/pedidos"       = { "svc-faturamento" = "read-write" }
+  "topic/pedido-criado" = { "svc-faturamento" = "read" }
+}
+```
+
+Data protection follows the platform, not the app: only the parameter `/jonomait/<env>/platform/allow-destroy` (`true` in labs, written by `infrastructure`) turns deletion protection off and lets buckets with objects be destroyed. Order: the data of an app before the app; a producer's data (and its shares) before its consumers'; on destroy, the reverse.
+
+## Guardrails (ADR-014)
+
+Self-service with limits: the app declares values, the platform decides what is safe. What an app may never change, it cannot change from its files; what is risky or expensive fails the plan with what to do.
+
+| Guardrail | Where | What happens |
+|---|---|---|
+| Platform values out of reach | runners read `/jonomait/<env>/platform/{zone,regions,allow-destroy}` (from `infrastructure` `global/dns-cloudflare`) | an app cannot move its names to another zone, use a region the platform does not run, or turn its data protection off; missing parameters stop the plan ("apply global/dns-cloudflare first") |
+| Contract fields only | `contract-check` action (`contract/check.py`, `contract/schema.json`), first step of `build-static` and `build-push` | a field outside the contract (`cpus = 4`), a platform field (`zone`, `allow_destroy`) or `name` ≠ repo fails the pull request with the fix. Terraform alone would only warn and ignore them |
+| Limits per environment | `policies/limits.json`, checked by the ECS and data runners | above the limit of CPU, memory, tasks or data resources per kind, the plan fails: use less or ask for an exception |
+| Consent for shared data | `shares` in the owner's `deploy/data.hcl` | `uses` and cross-app `subscribe` need the owner's share |
+
+**Exceptions** live next to the limits, by app and environment, with the reason, who approved it and a review date; past that date the plan fails until the platform team renews or removes it:
+
+```json
+"exceptions": {
+  "svc-relatorios": {
+    "production": { "memory": 8192 },
+    "reason": "monthly report builds a 6 GB dataset in memory",
+    "approved_by": "gh-infra",
+    "review_by": "2027-03-31"
+  }
+}
+```
 
 ## build-static
 

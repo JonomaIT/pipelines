@@ -83,15 +83,15 @@ module "app" {
 # them; the other regions only add the host rule on their own ALB.
 locals {
   env_short = { staging = "stg", production = "prd" }[var.environment]
-  ingress   = var.environment == "production" ? "ingress.${var.zone}" : "ingress-${local.env_short}.${var.zone}"
-  dns_owner = var.region == var.regions[0] && length(var.hosts) > 0
+  ingress   = var.environment == "production" ? "ingress.${local.zone}" : "ingress-${local.env_short}.${local.zone}"
+  dns_owner = var.region == var.regions[0] && length(var.hosts) > 0 && local.zone != "" # no zone: terraform_data.platform stops the plan
 }
 
 module "dns" {
   source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.9.0"
   count  = local.dns_owner ? 1 : 0
 
-  zone   = var.zone
+  zone   = local.zone
   hosts  = var.hosts
   target = local.ingress
   owner  = var.name
