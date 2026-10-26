@@ -94,7 +94,7 @@ run "secondary_region_does_not_touch_dns" {
     regions      = ["us-east-1", "sa-east-1"]
     hosts        = ["hello.joshuel.com.br"]
     min_capacity = 2
-    slo          = { disponibilidade = 99.5, latencia_p95_ms = 500 }
+    slo          = { availability = 99.5, latency_p95_ms = 500 }
   }
 
   assert {
@@ -149,10 +149,41 @@ run "production_needs_two_tasks" {
   variables {
     environment  = "production"
     min_capacity = 1
-    slo          = { disponibilidade = 99.5, latencia_p95_ms = 500 }
+    slo          = { availability = 99.5, latency_p95_ms = 500 }
   }
 
   expect_failures = [var.min_capacity]
+}
+
+run "contract_v1_slo_keys_are_refused" {
+  command = plan
+
+  variables {
+    slo = { disponibilidade = 99.5, latencia_p95_ms = 500 }
+  }
+
+  expect_failures = [var.slo]
+}
+
+run "slo_needs_both_objectives" {
+  command = plan
+
+  variables {
+    slo = { availability = 99.5 }
+  }
+
+  expect_failures = [var.slo]
+}
+
+run "contract_v1_field_names_are_refused" {
+  command = plan
+
+  variables {
+    cobertura_minima = 80
+    fora_do_horario  = true
+  }
+
+  expect_failures = [var.cobertura_minima, var.fora_do_horario]
 }
 
 run "production_needs_an_slo" {
