@@ -8,6 +8,7 @@ pipelines/
 │   ├── terraform-ci.yml       reusable: fmt, validate, terraform test of every root
 │   ├── terraform-deploy.yml   reusable: plan (PR) / apply (main, manual) per component × account × region
 │   ├── build-push.yml         reusable: app image build + Trivy scan (PR); also push to ECR (main)
+│   ├── build-static.yml       reusable: static site lint, typecheck, test, build + Trivy (PR); also keeps the site (main)
 │   └── ci.yml                 this repo's own checks (actionlint + terraform-ci)
 └── terraform-runner/
     ├── ecs/                   generic root for every ECS app: ecs-service + app-dns
@@ -28,7 +29,7 @@ jobs:
 | `terraform-modules`, `organization` | `terraform-ci` |
 | `infrastructure` | `terraform-ci` + `terraform-deploy` |
 | apps with an image (`svc-*`) | `build-push` (then `deploy-ecs`, next) |
-| static sites (`web-*`) | `deploy-static` (next) |
+| static sites (`web-*`) | `build-static` (then the deploy, next) |
 
 ## terraform-ci
 
@@ -70,6 +71,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v2.1.0` | `build-static` reusable workflow: static sites (`web-*` with a `package.json`) are linted, type-checked, tested and built the same way, the `package.json` scripts being the interface; Trivy scans the lockfile; on `main` the built folder is kept as the `site` artifact. |
 | `v2.0.0` | **Contract v2: every field in English** (breaking). In `deploy/app.hcl`: `slo = { availability, latency_p95_ms }` (was `disponibilidade`, `latencia_p95_ms`), `min_coverage` (was `cobertura_minima`); in `deploy/env/<account>.tfvars`: `off_hours` (was `fora_do_horario`). The old names are refused at plan time with a message giving the new one; they leave in `v3`. `slo` needs both objectives. |
 | `v1.4.3` | ECS runner: "production needs an `slo`" and "the region must be in `regions`" now **stop the plan** (variable validations). They were `check` blocks, which Terraform only reports as warnings, so a deploy breaking them went through. Tests prove both refusals. |
 | `v1.4.2` | `terraform-deploy`: the apply and drift jobs use `!cancelled()` instead of `always()`, so a cancelled run no longer leaves apply jobs waiting at the approval gate (they blocked the next run through `concurrency`). |
@@ -158,6 +160,18 @@ Names are `jonomait-<env>-<app>-<logical name>`. The **`…-data-access`** polic
 Refused at plan time, with a message saying what to fix: two resources giving the same variable, a queue subscribing to an own topic not in `topics`, `uses` naming the app itself or a resource that does not exist, malformed names.
 
 `allow_destroy` (labs only, set by the platform): turns deletion protection off and lets buckets with objects be destroyed. Order: the data of an app before the app; a producer's data before its consumers'; on destroy, the reverse.
+
+## build-static
+
+Static sites (`runtime = "cloudfront"`, `web-*`). The repo's `package.json` is the interface: whatever the framework, the site provides the scripts `lint`, `typecheck`, `test` and `build`, Node comes from `.nvmrc` and dependencies only from the lockfile (`npm ci`).
+
+| Step | Fails when |
+|---|---|
+| Trivy on `package-lock.json` | a HIGH or CRITICAL vulnerability with a fix |
+| `npm run lint`, `typecheck`, `test` | the script fails |
+| `npm run build` | it fails or writes no `<output-dir>/index.html` (`dist` by default = `source_dir` in `deploy/app.hcl`) |
+
+On `main` the built folder is kept as the **`site`** artifact (7 days): the deploy uploads exactly what was tested. Starting point for a new site: [`template-web-react`](https://github.com/JonomaIT/template-web-react).
 
 ## build-push
 
