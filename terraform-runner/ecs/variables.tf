@@ -75,24 +75,50 @@ variable "secrets" {
 
 # tflint-ignore: terraform_unused_declarations # part of the app contract; only validated until the alerts exist
 variable "slo" {
+  # The contract v1 keys (disponibilidade, latencia_p95_ms) are still recognized, only to be refused
+  # with the new names; they leave in v3.
   type = object({
-    disponibilidade = number
-    latencia_p95_ms = number
+    availability    = optional(number)
+    latency_p95_ms  = optional(number)
+    disponibilidade = optional(number)
+    latencia_p95_ms = optional(number)
   })
-  description = "Availability and latency objectives (required in production; alerts come later, see Observabilidade)"
+  description = "Availability (%) and p95 latency (ms) objectives; required in production (alerts come later, see Observabilidade)"
   default     = null
 
   validation {
+    condition     = var.slo == null || try(var.slo.disponibilidade == null && var.slo.latencia_p95_ms == null, true)
+    error_message = "slo keys were renamed in contract v2: disponibilidade -> availability, latencia_p95_ms -> latency_p95_ms."
+  }
+
+  validation {
+    condition     = var.slo == null || try(var.slo.availability != null && var.slo.latency_p95_ms != null, false)
+    error_message = "slo needs availability and latency_p95_ms, e.g. slo = { availability = 99.5, latency_p95_ms = 500 }."
+  }
+
+  validation {
     condition     = var.environment != "production" || var.slo != null
-    error_message = "production apps must declare slo in deploy/app.hcl, e.g. slo = { disponibilidade = 99.5, latencia_p95_ms = 500 }."
+    error_message = "production apps must declare slo in deploy/app.hcl, e.g. slo = { availability = 99.5, latency_p95_ms = 500 }."
   }
 }
 
 # tflint-ignore: terraform_unused_declarations # part of the app contract
+variable "min_coverage" {
+  type        = number
+  description = "Minimum coverage (%) on the lines a pull request changes (used by pr-check, not here)"
+  default     = 80
+}
+
+# tflint-ignore: terraform_unused_declarations # contract v1 name, refused with the new one; leaves in v3
 variable "cobertura_minima" {
   type        = number
-  description = "Minimum coverage on changed lines (used by pr-check, not here)"
-  default     = 80
+  description = "Renamed to min_coverage in contract v2"
+  default     = null
+
+  validation {
+    condition     = var.cobertura_minima == null
+    error_message = "cobertura_minima was renamed to min_coverage in contract v2 (deploy/app.hcl)."
+  }
 }
 
 # --------------------------------------------- deploy/env/<account>.tfvars
@@ -140,8 +166,20 @@ variable "cpu_target" {
 }
 
 # tflint-ignore: terraform_unused_declarations # part of the app contract
-variable "fora_do_horario" {
+variable "off_hours" {
   type        = bool
   description = "Scale staging to zero off-hours (not implemented yet)"
   default     = null
+}
+
+# tflint-ignore: terraform_unused_declarations # contract v1 name, refused with the new one; leaves in v3
+variable "fora_do_horario" {
+  type        = bool
+  description = "Renamed to off_hours in contract v2"
+  default     = null
+
+  validation {
+    condition     = var.fora_do_horario == null
+    error_message = "fora_do_horario was renamed to off_hours in contract v2 (deploy/env/<account>.tfvars)."
+  }
 }

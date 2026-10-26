@@ -70,6 +70,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v2.0.0` | **Contract v2: every field in English** (breaking). In `deploy/app.hcl`: `slo = { availability, latency_p95_ms }` (was `disponibilidade`, `latencia_p95_ms`), `min_coverage` (was `cobertura_minima`); in `deploy/env/<account>.tfvars`: `off_hours` (was `fora_do_horario`). The old names are refused at plan time with a message giving the new one; they leave in `v3`. `slo` needs both objectives. |
 | `v1.4.3` | ECS runner: "production needs an `slo`" and "the region must be in `regions`" now **stop the plan** (variable validations). They were `check` blocks, which Terraform only reports as warnings, so a deploy breaking them went through. Tests prove both refusals. |
 | `v1.4.2` | `terraform-deploy`: the apply and drift jobs use `!cancelled()` instead of `always()`, so a cancelled run no longer leaves apply jobs waiting at the approval gate (they blocked the next run through `concurrency`). |
 | `v1.4.1` | Data runner: parameters written as `insecure_value` (they are names, URLs and ARNs, not secrets), so plans show what the app will receive. |
@@ -100,9 +101,9 @@ terraform plan \
 | From | Fields |
 |---|---|
 | the pipeline | `environment` (GitHub Environment), `region` (one job per region in `regions`), `image` (built once, promoted) |
-| `deploy/app.hcl` | `runtime`, `name`, `port`, `health_check_path`, `env`, `secrets`, `slo`, `cobertura_minima` |
+| `deploy/app.hcl` | `runtime`, `name`, `port`, `health_check_path`, `env`, `secrets`, `slo` (`availability`, `latency_p95_ms`), `min_coverage` |
 | the data runner | the app's data variables and data-access policy (when it has `deploy/data.hcl`) |
-| `deploy/env/<account>.tfvars` | `regions`, `hosts`, `cpu`, `memory`, `min_capacity`, `max_capacity`, `cpu_target`, `fora_do_horario` |
+| `deploy/env/<account>.tfvars` | `regions`, `hosts`, `cpu`, `memory`, `min_capacity`, `max_capacity`, `cpu_target`, `off_hours` |
 
 **Public names (ADR-010):** the run of the primary region (first in `regions`) creates each `hosts` entry as a proxied CNAME to the environment's entry (`ingress.<zone>` in production, `ingress-<env>.<zone>` elsewhere), with the `app-dns` pattern: owner in the record comment, reserved names and names owned by another app refused. Needs `CLOUDFLARE_API_TOKEN` (in the app pipeline: a token that can only edit DNS).
 
