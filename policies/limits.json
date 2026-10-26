@@ -1,0 +1,7 @@
+{
+  "defaults": {
+    "staging": { "cpu": 1024, "memory": 2048, "max_capacity": 2, "data_resources_per_kind": 10 },
+    "production": { "cpu": 2048, "memory": 4096, "max_capacity": 10, "data_resources_per_kind": 10 }
+  },
+  "exceptions": {}
+}

@@ -11,12 +11,6 @@ variable "environment" {
   }
 }
 
-variable "zone" {
-  type        = string
-  description = "Cloudflare zone of the platform; the site's hosts live under it"
-  default     = "joshuel.com.br"
-}
-
 # ----------------------------------------------------------- deploy/app.hcl
 # tflint-ignore: terraform_unused_declarations # part of the app contract
 variable "runtime" {

@@ -33,6 +33,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Only contract fields in deploy/, none of the platform's, name = repo name (ADR-014).
+      - name: App contract
+        uses: JonomaIT/pipelines/.github/actions/contract-check@v2.2.0
+
       - name: Trivy (dependencies, HIGH and CRITICAL with a fix)
         run: |
           docker run --rm -v "$PWD/package-lock.json:/src/package-lock.json:ro" "$TRIVY_IMAGE" \

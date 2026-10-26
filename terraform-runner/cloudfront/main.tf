@@ -8,12 +8,19 @@
 #
 # The files are uploaded afterwards (aws s3 sync to the output bucket + invalidation).
 
+# Nothing is built without the platform's parameters: the plan stops at terraform_data.platform
+# with what to do, instead of the modules failing on an empty zone.
+locals {
+  platform_ready = local.zone != ""
+}
+
 module "site" {
   source = "git::https://github.com/JonomaIT/terraform-modules.git//cloudfront-site?ref=v0.9.0"
+  count  = local.platform_ready ? 1 : 0
 
   name          = var.name
   environment   = var.environment
-  zone          = var.zone
+  zone          = local.zone
   hosts         = var.hosts
   spa           = var.spa
   force_destroy = var.environment != "production"
@@ -21,9 +28,21 @@ module "site" {
 
 module "dns" {
   source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.9.0"
+  count  = local.platform_ready ? 1 : 0
 
-  zone   = var.zone
+  zone   = local.zone
   hosts  = var.hosts
-  target = module.site.domain_name
+  target = module.site[0].domain_name
   owner  = var.name
+}
+
+# Before v2.2.0 the modules had no count.
+moved {
+  from = module.site
+  to   = module.site[0]
+}
+
+moved {
+  from = module.dns
+  to   = module.dns[0]
 }

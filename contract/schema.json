@@ -1,0 +1,18 @@
+{
+  "runtimes": {
+    "ecs": {
+      "deploy/app.hcl": ["runtime", "name", "port", "health_check_path", "env", "secrets", "slo", "min_coverage"],
+      "deploy/env/*.tfvars": ["regions", "hosts", "cpu", "memory", "min_capacity", "max_capacity", "cpu_target", "off_hours"],
+      "deploy/data.hcl": ["tables", "topics", "queues", "buckets", "uses", "shares"]
+    },
+    "cloudfront": {
+      "deploy/app.hcl": ["runtime", "name", "source_dir", "spa"],
+      "deploy/env/*.tfvars": ["hosts"]
+    }
+  },
+  "platform": ["environment", "region", "image", "zone", "allow_destroy"],
+  "renamed": {
+    "cobertura_minima": "min_coverage",
+    "fora_do_horario": "off_hours"
+  }
+}
