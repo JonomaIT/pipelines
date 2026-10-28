@@ -27,6 +27,11 @@ module "site" {
   spa             = var.spa
   failover_region = local.failover_region
   force_destroy   = var.environment != "production"
+
+  # Every edge location: users in South America are served from there, not from the US. No fixed
+  # cost, only a slightly higher price per GB (the module's default, PriceClass_100, has none in
+  # South America).
+  price_class = "PriceClass_All"
 }
 
 module "dns" {
