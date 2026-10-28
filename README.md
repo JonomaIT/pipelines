@@ -229,7 +229,7 @@ The app's own pipeline deploys it, with nothing but its `deploy/` files. The cal
   deploy:
     needs: image
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    uses: JonomaIT/pipelines/.github/workflows/deploy-app.yml@v2.3.1
+    uses: JonomaIT/pipelines/.github/workflows/deploy-app.yml@v2.4.0
     with:
       environment: production
     secrets:
