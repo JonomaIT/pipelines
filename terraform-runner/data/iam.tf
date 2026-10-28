@@ -7,6 +7,7 @@ locals {
     [for t, _ in var.tables : { kind = "table", physical = "${local.prefix}-${t}", access = "read-write" }],
     [for t in var.topics : { kind = "topic", physical = "${local.prefix}-${t}", access = "write" }],
     [for q, _ in var.queues : { kind = "queue", physical = "${local.prefix}-${q}", access = "read-write" }],
+    [for q in local.standby_queues : { kind = "queue", physical = "${local.prefix}-${q}-standby", access = "read-write" }],
     [for b, _ in var.buckets : { kind = "bucket", physical = "${local.prefix}-${b}", access = "read-write" }],
     [for u in local.uses : { kind = u.kind, physical = u.physical, access = u.access }],
   )

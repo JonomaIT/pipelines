@@ -153,6 +153,26 @@ run "no_data_no_policy" {
   }
 }
 
+run "standby_queue_for_active_active" {
+  command = plan
+
+  variables {
+    queues = {
+      pedidos = { subscribe = ["svc-pedidos/pedido-criado"], standby = true }
+    }
+  }
+
+  assert {
+    condition     = contains(keys(output.environment_variables), "QUEUE_PEDIDOS_STANDBY") && length(output.environment_variables["QUEUE_PEDIDOS_STANDBY"]) == 2
+    error_message = "With standby the app also gets QUEUE_<NAME>_STANDBY in every region."
+  }
+
+  assert {
+    condition     = contains(output.permissions["QueueRead"].resources, "arn:aws:sqs:sa-east-1:111111111111:jonomait-prd-svc-faturamento-pedidos-standby")
+    error_message = "The app may consume its standby queue."
+  }
+}
+
 run "table_and_queue_may_share_a_name" {
   command = plan
 
