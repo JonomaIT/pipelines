@@ -46,6 +46,32 @@ run "site_and_its_name" {
   }
 }
 
+run "copy_in_the_other_platform_region" {
+  command = plan
+
+  assert {
+    condition     = local.failover_region == "sa-east-1"
+    error_message = "With two platform regions the site gets a copy in the one that is not us-east-1."
+  }
+}
+
+run "one_region_one_bucket" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.platform
+    values = {
+      names  = ["/jonomait/production/platform/zone", "/jonomait/production/platform/regions"]
+      values = ["joshuel.com.br", "us-east-1"]
+    }
+  }
+
+  assert {
+    condition     = local.failover_region == null && output.failover_bucket == null
+    error_message = "One platform region: no copy."
+  }
+}
+
 run "other_runtime_is_rejected" {
   command = plan
 
