@@ -5,9 +5,13 @@
 #   table  sales          → TABLE_SALES            = table name (the same in every region)
 #   topic  sales-created  → TOPIC_SALES_CREATED    = topic ARN of the region
 #   queue  sales-process  → QUEUE_SALES_PROCESS    = queue URL of the region
+#                           QUEUE_SALES_PROCESS_STANDBY  with standby: the other regions' copies
 #   bucket offload        → BUCKET_OFFLOAD         = bucket name of the region
 
 locals {
+  # Queues split by region (standby, ADR-013): only with several regions.
+  standby_queues = [for q, c in var.queues : q if c.standby && length(var.regions) > 1]
+
   # A table and a queue may share a logical name (TABLE_X and QUEUE_X).
   env_name = { for n in distinct(concat(keys(var.tables), var.topics, keys(var.queues), keys(var.buckets))) : n => upper(replace(n, "-", "_")) }
 
@@ -16,6 +20,7 @@ locals {
     [for t, _ in var.tables : "TABLE_${local.env_name[t]}"],
     [for t in var.topics : "TOPIC_${local.env_name[t]}"],
     [for q, _ in var.queues : "QUEUE_${local.env_name[q]}"],
+    [for q in local.standby_queues : "QUEUE_${local.env_name[q]}_STANDBY"],
     [for b, _ in var.buckets : "BUCKET_${local.env_name[b]}"],
     [for u in local.uses : "${upper(u.kind)}_${upper(replace(u.logical, "-", "_"))}"],
   )
@@ -25,6 +30,7 @@ locals {
     { for t, _ in var.tables : "TABLE_${local.env_name[t]}" => { for r in var.regions : r => module.table[t].name } },
     { for t in var.topics : "TOPIC_${local.env_name[t]}" => module.topic[t].arns },
     { for q, _ in var.queues : "QUEUE_${local.env_name[q]}" => module.queue[q].urls },
+    { for q in local.standby_queues : "QUEUE_${local.env_name[q]}_STANDBY" => module.queue[q].standby_urls },
     { for b, _ in var.buckets : "BUCKET_${local.env_name[b]}" => module.bucket[b].names },
     {
       for u in local.uses : "${upper(u.kind)}_${upper(replace(u.logical, "-", "_"))}" => {

@@ -76,6 +76,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v2.4.0` | **Active/active (ADR-013).** Data runner: a queue with `standby = true` (several regions) gets only its own region's topic, and `<queue>-standby` the other regions' copies; the app receives `QUEUE_<NAME>_STANDBY` and may consume it. Modules `v0.10.0`. |
 | `v2.3.1` | `deploy-app`: smoke tests run with the Hurl container image; the `.deb` could not be installed on the current runner image (`libxml2` dependency). |
 | `v2.3.0` | **`deploy-app` reusable workflow: the app's pipeline deploys.** One job per account (its GitHub Environment): data → the app in each region, primary first → `tests/smoke/*.hurl` against the public names (ecs); the site's infrastructure → the built files → invalidation (cloudfront); `destroy` runs the reverse, data last. Each step plans, shows the plan in the run summary and applies that plan. `contract/app.py` reads how an app deploys (runtime, regions, hosts, data, smoke tests). `build-push` no longer fails when the commit's image is already in the registry (a manual re-run). |
 | `v2.2.0` | **Guardrails of self-service (ADR-014).** Values the platform decides (zone, regions, whether app data may be destroyed) are read from `/jonomait/<env>/platform/*` (written by `infrastructure` `global/dns-cloudflare`), never from the app's files: `zone` and `allow_destroy` are no longer variables. Limits per environment (`policies/limits.json`: CPU, memory, tasks, data resources per kind) with dated exceptions. Data of another app needs its owner's consent: `shares` in the owner's `deploy/data.hcl`, checked for `uses` and for subscriptions. `contract-check` action (in `build-static` and `build-push`): only contract fields in `deploy/`, none of the platform's, `name` = repo name. The CloudFront runner's modules now have `count` (`moved` blocks keep existing states). |
@@ -160,6 +161,7 @@ terraform plan -var-file=../../../svc-faturamento/deploy/data.hcl \
 | `tables` | DynamoDB global table, on demand, PITR, deletion protection | read-write |
 | `topics` | SNS topic | publish |
 | `queues` | SQS queue + DLQ, subscribed to `subscribe` (own `"<topic>"` or `"<app>/<topic>"`) of every region | consume and send |
+| `queues` with `standby = true` | Active/active (ADR-013): each region's queue gets only its own region's topic, and `<queue>-standby` the other regions' copies (`QUEUE_<NAME>_STANDBY`), to consume while another region is out | consume and send, both queues |
 | `buckets` | S3 bucket `<name>-<region>`, replicated both ways | read-write |
 | `uses` | nothing new: access to another app's resource, which must exist | `read`, `write` or `read-write` |
 

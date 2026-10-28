@@ -58,8 +58,9 @@ variable "queues" {
     visibility_timeout = optional(number, 60)
     retention_days     = optional(number, 4)
     max_receive_count  = optional(number, 5)
+    standby            = optional(bool, false)
   }))
-  description = "SQS queues the app consumes (one per region, with a dead-letter queue). subscribe: topics as \"<topic>\" (own) or \"<app>/<topic>\"; every region's queue gets every region's topic"
+  description = "SQS queues the app consumes (one per region, with a dead-letter queue). subscribe: topics as \"<topic>\" (own) or \"<app>/<topic>\"; every region's queue gets every region's topic. standby (several regions): each region's queue gets only its own region's topic and <queue>-standby the other regions' copies (ADR-013)"
   default     = {}
 }
 

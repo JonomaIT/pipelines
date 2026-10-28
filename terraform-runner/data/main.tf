@@ -83,7 +83,7 @@ resource "terraform_data" "contract" {
 
 # ------------------------------------------------------------------ resources
 module "table" {
-  source   = "git::https://github.com/JonomaIT/terraform-modules.git//dynamodb-table?ref=v0.9.0"
+  source   = "git::https://github.com/JonomaIT/terraform-modules.git//dynamodb-table?ref=v0.10.0"
   for_each = var.tables
 
   name                = "${local.prefix}-${each.key}"
@@ -97,7 +97,7 @@ module "table" {
 }
 
 module "topic" {
-  source   = "git::https://github.com/JonomaIT/terraform-modules.git//sns-topic?ref=v0.9.0"
+  source   = "git::https://github.com/JonomaIT/terraform-modules.git//sns-topic?ref=v0.10.0"
   for_each = toset(var.topics)
 
   name    = "${local.prefix}-${each.key}"
@@ -113,7 +113,7 @@ data "aws_sns_topic" "subscribed" {
 }
 
 module "queue" {
-  source   = "git::https://github.com/JonomaIT/terraform-modules.git//sqs-queue?ref=v0.9.0"
+  source   = "git::https://github.com/JonomaIT/terraform-modules.git//sqs-queue?ref=v0.10.0"
   for_each = var.queues
 
   name               = "${local.prefix}-${each.key}"
@@ -121,9 +121,10 @@ module "queue" {
   visibility_timeout = each.value.visibility_timeout
   retention_days     = each.value.retention_days
   max_receive_count  = each.value.max_receive_count
+  standby            = each.value.standby
 
-  # Every region's queue gets the topic of every region. An undeclared own topic is left out
-  # here and reported by the contract.
+  # Every region's queue gets the topic of every region (with standby, the other regions' copies
+  # go to <queue>-standby). An undeclared own topic is left out here and reported by the contract.
   subscribe_topic_arns = distinct(flatten([
     for s in each.value.subscribe : strcontains(s, "/")
     ? [for r in var.regions : data.aws_sns_topic.subscribed["${s}|${r}"].arn]
@@ -134,7 +135,7 @@ module "queue" {
 }
 
 module "bucket" {
-  source   = "git::https://github.com/JonomaIT/terraform-modules.git//s3-bucket?ref=v0.9.0"
+  source   = "git::https://github.com/JonomaIT/terraform-modules.git//s3-bucket?ref=v0.10.0"
   for_each = var.buckets
 
   name            = "${local.prefix}-${each.key}"
