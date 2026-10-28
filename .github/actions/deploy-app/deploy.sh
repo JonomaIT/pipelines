@@ -13,7 +13,7 @@ RUNNERS="$ROOT/terraform-runner"
 APP_DIR="$PWD"
 : "${ENVIRONMENT:?}" "${GITHUB_STEP_SUMMARY:=/dev/stdout}"
 DESTROY="${DESTROY:-false}"
-HURL_VERSION="6.1.1"
+HURL_IMAGE="ghcr.io/orange-opensource/hurl:6.1.1" # the .deb depends on the runner's libxml2
 
 app=$(python3 "$ROOT/contract/app.py" --environment "$ENVIRONMENT" "$APP_DIR")
 runtime=$(jq -r .runtime <<<"$app")
@@ -115,14 +115,12 @@ smoke() {
     echo "No smoke tests (tests/smoke/*.hurl and a public host are both needed)." >>"$GITHUB_STEP_SUMMARY"
     return 0
   fi
-  curl -fsSL -o "$RUNNER_TEMP/hurl.deb" \
-    "https://github.com/Orange-OpenSource/hurl/releases/download/$HURL_VERSION/hurl_${HURL_VERSION}_amd64.deb"
-  sudo apt-get install -y -qq "$RUNNER_TEMP/hurl.deb" >/dev/null
   local host file
   for host in "${hosts[@]}"; do
     for file in "${smoke_files[@]}"; do
       echo "::group::smoke · $host · $file"
-      hurl --test --retry 20 --retry-interval 15000 --variable "host=https://$host" "$APP_DIR/$file"
+      docker run --rm -v "$APP_DIR:/app" -w /app "$HURL_IMAGE" \
+        --test --retry 20 --retry-interval 15000 --variable "host=https://$host" "$file"
       echo "::endgroup::"
       echo "Smoke \`$file\` on https://$host: passed." >>"$GITHUB_STEP_SUMMARY"
     done
