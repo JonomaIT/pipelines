@@ -1,0 +1,37 @@
+name: deploy-app
+description: >-
+  Deploys (or destroys) an app in one account with this repo's runners, from its deploy/ files:
+  data, then the app in each region (ecs) or the site (cloudfront), then smoke tests. Used by the
+  deploy-app reusable workflow; expects the account's AWS credentials and terraform on PATH.
+inputs:
+  environment:
+    description: The account (deploy/env/<account>.tfvars)
+    required: true
+  destroy:
+    description: Destroy instead of deploy (reverse order, data last)
+    required: false
+    default: "false"
+  image-tag:
+    description: ecs - tag of the image in the platform registry (the commit SHA)
+    required: false
+    default: ""
+  registry-account:
+    description: ecs - account of the platform registry (shared-services)
+    required: false
+    default: ""
+  site-dir:
+    description: cloudfront - folder with the built site
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Deploy
+      shell: bash
+      env:
+        ENVIRONMENT: ${{ inputs.environment }}
+        DESTROY: ${{ inputs.destroy }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        REGISTRY_ACCOUNT: ${{ inputs.registry-account }}
+        SITE_DIR: ${{ inputs.site-dir }}
+      run: bash "$GITHUB_ACTION_PATH/deploy.sh"
