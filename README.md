@@ -9,7 +9,12 @@ pipelines/
 │   ├── terraform-deploy.yml   reusable: plan (PR) / apply (main, manual) per component × account × region
 │   ├── build-push.yml         reusable: app image build + Trivy scan (PR); also push to ECR (main)
 │   ├── build-static.yml       reusable: static site lint, typecheck, test, build + Trivy (PR); also keeps the site (main)
+│   ├── deploy-app.yml         reusable: an app's data, app per region (or site) and smoke tests in one account
 │   └── ci.yml                 this repo's own checks (actionlint + terraform-ci)
+├── .github/actions/
+│   ├── contract-check/        the app contract (contract/check.py) before anything runs
+│   └── deploy-app/            the deploy itself (deploy.sh), with the runners of the same tag
+├── contract/                  schema.json, check.py (contract) and app.py (how an app deploys)
 └── terraform-runner/
     ├── ecs/                   generic root for every ECS app: ecs-service + app-dns
     ├── cloudfront/            generic root for every static site: cloudfront-site + app-dns
@@ -28,8 +33,8 @@ jobs:
 |---|---|
 | `terraform-modules`, `organization` | `terraform-ci` |
 | `infrastructure` | `terraform-ci` + `terraform-deploy` |
-| apps with an image (`svc-*`) | `build-push` (then `deploy-ecs`, next) |
-| static sites (`web-*`) | `build-static` (then the deploy, next) |
+| apps with an image (`svc-*`) | `build-push` + `deploy-app` |
+| static sites (`web-*`) | `build-static` + `deploy-app` |
 
 ## terraform-ci
 
@@ -71,6 +76,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v2.3.0` | **`deploy-app` reusable workflow: the app's pipeline deploys.** One job per account (its GitHub Environment): data → the app in each region, primary first → `tests/smoke/*.hurl` against the public names (ecs); the site's infrastructure → the built files → invalidation (cloudfront); `destroy` runs the reverse, data last. Each step plans, shows the plan in the run summary and applies that plan. `contract/app.py` reads how an app deploys (runtime, regions, hosts, data, smoke tests). `build-push` no longer fails when the commit's image is already in the registry (a manual re-run). |
 | `v2.2.0` | **Guardrails of self-service (ADR-014).** Values the platform decides (zone, regions, whether app data may be destroyed) are read from `/jonomait/<env>/platform/*` (written by `infrastructure` `global/dns-cloudflare`), never from the app's files: `zone` and `allow_destroy` are no longer variables. Limits per environment (`policies/limits.json`: CPU, memory, tasks, data resources per kind) with dated exceptions. Data of another app needs its owner's consent: `shares` in the owner's `deploy/data.hcl`, checked for `uses` and for subscriptions. `contract-check` action (in `build-static` and `build-push`): only contract fields in `deploy/`, none of the platform's, `name` = repo name. The CloudFront runner's modules now have `count` (`moved` blocks keep existing states). |
 | `v2.1.0` | `build-static` reusable workflow: static sites (`web-*` with a `package.json`) are linted, type-checked, tested and built the same way, the `package.json` scripts being the interface; Trivy scans the lockfile; on `main` the built folder is kept as the `site` artifact. |
 | `v2.0.0` | **Contract v2: every field in English** (breaking). In `deploy/app.hcl`: `slo = { availability, latency_p95_ms }` (was `disponibilidade`, `latencia_p95_ms`), `min_coverage` (was `cobertura_minima`); in `deploy/env/<account>.tfvars`: `off_hours` (was `fora_do_horario`). The old names are refused at plan time with a message giving the new one; they leave in `v3`. `slo` needs both objectives. |
@@ -212,13 +218,39 @@ On `main` the built folder is kept as the **`site`** artifact (7 days): the depl
 
 Builds the repo's `Dockerfile`, scans the image with **Trivy** (HIGH/CRITICAL with a fix fail) and, on `main`, pushes it to the platform registry (ECR in shared-services, created by `infrastructure/ecr`) as `<registry>/<repo>:<sha>` with the `github-actions-ecr-push` role. Pull requests only build and scan. The registry replicates every image to the other regions; the ECS runner swaps the region in the image address, so each region pulls from its own copy.
 
+## deploy-app
+
+The app's own pipeline deploys it, with nothing but its `deploy/` files. The caller (in `ci.yml`, after the image or the site is built in the same run):
+
+```yaml
+  deploy:
+    needs: image
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    uses: JonomaIT/pipelines/.github/workflows/deploy-app.yml@v2.3.0
+    with:
+      environment: production
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_JONOMA }}
+```
+
+| Runtime | Order | State keys |
+|---|---|---|
+| `ecs` | `deploy/data.hcl` (all regions in one state) → the app in each region of `regions`, primary first → smoke tests | `<account>/cross-region/data/<app>`, `<account>/<region>/apps/<app>` |
+| `cloudfront` | the site's bucket, distribution and name → `aws s3 sync` of the `site` artifact (hashed `assets/` cached for a year, the rest revalidated) → invalidation of `/index.html` and `/config.json` | `<account>/global/apps/<app>` |
+
+- **Image:** `<registry>/<app>:<commit sha>`, from each region's replica. Built once by `build-push`; a manual run of the same commit reuses it.
+- **Data between apps:** the owner deploys first (its `shares` must exist before the consumer's `uses`).
+- **Destroy** (`destroy: true`): regions from last to first, data last, and only where the platform allows destroying data. The site bucket is emptied first.
+- **Role:** `github-actions-<repo>` in the account (organization bootstrap), assumable only inside the account's GitHub Environment.
+- **Not yet (ADR-014, step 3):** a role that trusts only this workflow (`job_workflow_ref`), the plan shown *before* the approval, production approved by a second person, a permissions boundary.
+
 ## CloudFront runner
 
 `terraform-runner/cloudfront`: static sites (`runtime = "cloudfront"`). Creates the private bucket and the distribution (`cloudfront-site`) and the site's public names pointing at it (`app-dns`). Global: one run per account, in us-east-1, state key `<env>/global/apps/<name>`. The files are uploaded afterwards (S3 sync with long cache, HTML/CSS/JS with `no-cache`, CloudFront invalidation).
 
 ## Next
 
-- App workflows: `build-push.yml` (image to ECR in shared-services), `deploy-ecs.yml` (the ECS runner, one job per region in `regions`, production after approval), `rollback-ecs.yml`. They need the ECR component and a deploy role per app in the bootstrap.
+- `deploy-app`, step 3 of ADR-014: deploy role restricted to this workflow, plan before approval, second approver in production, permissions boundary; staging before production; rollback (deploy the previous SHA).
 - Regions in parallel in `terraform-deploy` (today one target at a time per account, in order).
 - Infracost (cost of each PR): needs a free Infracost API key.
 - The kit of workflows each app repo receives (`callers/ecs`).

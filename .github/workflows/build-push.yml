@@ -78,8 +78,13 @@ jobs:
         run: |
           aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
           image="$REGISTRY/$APP:$GITHUB_SHA"
-          docker tag "$LOCAL_TAG" "$image"
-          docker push "$image"
+          # Tags are immutable: a re-run of the same commit (e.g. a manual deploy) keeps the image.
+          if aws ecr describe-images --repository-name "$APP" --image-ids "imageTag=$GITHUB_SHA" >/dev/null 2>&1; then
+            echo "::notice::$image already in the registry: not pushed again."
+          else
+            docker tag "$LOCAL_TAG" "$image"
+            docker push "$image"
+          fi
           echo "image=$image" >> "$GITHUB_OUTPUT"
           {
             echo "### Image"
