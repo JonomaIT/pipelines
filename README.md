@@ -76,6 +76,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v2.3.1` | `deploy-app`: smoke tests run with the Hurl container image; the `.deb` could not be installed on the current runner image (`libxml2` dependency). |
 | `v2.3.0` | **`deploy-app` reusable workflow: the app's pipeline deploys.** One job per account (its GitHub Environment): data → the app in each region, primary first → `tests/smoke/*.hurl` against the public names (ecs); the site's infrastructure → the built files → invalidation (cloudfront); `destroy` runs the reverse, data last. Each step plans, shows the plan in the run summary and applies that plan. `contract/app.py` reads how an app deploys (runtime, regions, hosts, data, smoke tests). `build-push` no longer fails when the commit's image is already in the registry (a manual re-run). |
 | `v2.2.0` | **Guardrails of self-service (ADR-014).** Values the platform decides (zone, regions, whether app data may be destroyed) are read from `/jonomait/<env>/platform/*` (written by `infrastructure` `global/dns-cloudflare`), never from the app's files: `zone` and `allow_destroy` are no longer variables. Limits per environment (`policies/limits.json`: CPU, memory, tasks, data resources per kind) with dated exceptions. Data of another app needs its owner's consent: `shares` in the owner's `deploy/data.hcl`, checked for `uses` and for subscriptions. `contract-check` action (in `build-static` and `build-push`): only contract fields in `deploy/`, none of the platform's, `name` = repo name. The CloudFront runner's modules now have `count` (`moved` blocks keep existing states). |
 | `v2.1.0` | `build-static` reusable workflow: static sites (`web-*` with a `package.json`) are linted, type-checked, tested and built the same way, the `package.json` scripts being the interface; Trivy scans the lockfile; on `main` the built folder is kept as the `site` artifact. |
@@ -226,7 +227,7 @@ The app's own pipeline deploys it, with nothing but its `deploy/` files. The cal
   deploy:
     needs: image
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    uses: JonomaIT/pipelines/.github/workflows/deploy-app.yml@v2.3.0
+    uses: JonomaIT/pipelines/.github/workflows/deploy-app.yml@v2.3.1
     with:
       environment: production
     secrets:
