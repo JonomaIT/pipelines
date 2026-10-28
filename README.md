@@ -76,6 +76,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v2.4.1` | Data runner on modules `v0.10.1`: the standby queue is created after its dead-letter queue allows it (the first real apply of `standby` failed). |
 | `v2.4.0` | **Active/active (ADR-013).** Data runner: a queue with `standby = true` (several regions) gets only its own region's topic, and `<queue>-standby` the other regions' copies; the app receives `QUEUE_<NAME>_STANDBY` and may consume it. Modules `v0.10.0`. |
 | `v2.3.1` | `deploy-app`: smoke tests run with the Hurl container image; the `.deb` could not be installed on the current runner image (`libxml2` dependency). |
 | `v2.3.0` | **`deploy-app` reusable workflow: the app's pipeline deploys.** One job per account (its GitHub Environment): data → the app in each region, primary first → `tests/smoke/*.hurl` against the public names (ecs); the site's infrastructure → the built files → invalidation (cloudfront); `destroy` runs the reverse, data last. Each step plans, shows the plan in the run summary and applies that plan. `contract/app.py` reads how an app deploys (runtime, regions, hosts, data, smoke tests). `build-push` no longer fails when the commit's image is already in the registry (a manual re-run). |
@@ -229,7 +230,7 @@ The app's own pipeline deploys it, with nothing but its `deploy/` files. The cal
   deploy:
     needs: image
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    uses: JonomaIT/pipelines/.github/workflows/deploy-app.yml@v2.4.0
+    uses: JonomaIT/pipelines/.github/workflows/deploy-app.yml@v2.4.1
     with:
       environment: production
     secrets:

@@ -83,7 +83,7 @@ resource "terraform_data" "contract" {
 
 # ------------------------------------------------------------------ resources
 module "table" {
-  source   = "git::https://github.com/JonomaIT/terraform-modules.git//dynamodb-table?ref=v0.10.0"
+  source   = "git::https://github.com/JonomaIT/terraform-modules.git//dynamodb-table?ref=v0.10.1"
   for_each = var.tables
 
   name                = "${local.prefix}-${each.key}"
@@ -97,7 +97,7 @@ module "table" {
 }
 
 module "topic" {
-  source   = "git::https://github.com/JonomaIT/terraform-modules.git//sns-topic?ref=v0.10.0"
+  source   = "git::https://github.com/JonomaIT/terraform-modules.git//sns-topic?ref=v0.10.1"
   for_each = toset(var.topics)
 
   name    = "${local.prefix}-${each.key}"
@@ -113,7 +113,7 @@ data "aws_sns_topic" "subscribed" {
 }
 
 module "queue" {
-  source   = "git::https://github.com/JonomaIT/terraform-modules.git//sqs-queue?ref=v0.10.0"
+  source   = "git::https://github.com/JonomaIT/terraform-modules.git//sqs-queue?ref=v0.10.1"
   for_each = var.queues
 
   name               = "${local.prefix}-${each.key}"
@@ -135,7 +135,7 @@ module "queue" {
 }
 
 module "bucket" {
-  source   = "git::https://github.com/JonomaIT/terraform-modules.git//s3-bucket?ref=v0.10.0"
+  source   = "git::https://github.com/JonomaIT/terraform-modules.git//s3-bucket?ref=v0.10.1"
   for_each = var.buckets
 
   name            = "${local.prefix}-${each.key}"

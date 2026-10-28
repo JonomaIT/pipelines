@@ -75,7 +75,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: App contract
-        uses: JonomaIT/pipelines/.github/actions/contract-check@v2.4.0
+        uses: JonomaIT/pipelines/.github/actions/contract-check@v2.4.1
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
@@ -97,7 +97,7 @@ jobs:
           path: ${{ runner.temp }}/site
 
       - name: Deploy
-        uses: JonomaIT/pipelines/.github/actions/deploy-app@v2.4.0
+        uses: JonomaIT/pipelines/.github/actions/deploy-app@v2.4.1
         with:
           environment: ${{ inputs.environment }}
           destroy: ${{ inputs.destroy }}
