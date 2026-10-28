@@ -76,6 +76,7 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 | Tag | Change |
 |---|---|
+| `v2.5.0` | **Static sites survive their bucket's region.** CloudFront runner on modules `v0.11.0`: with two platform regions the site gets a copy of its bucket in the region other than `us-east-1`, and CloudFront fails over to it (origin group, 5xx or no answer). `deploy-app` uploads every build to both buckets and empties both on destroy. |
 | `v2.4.1` | Data runner on modules `v0.10.1`: the standby queue is created after its dead-letter queue allows it (the first real apply of `standby` failed). |
 | `v2.4.0` | **Active/active (ADR-013).** Data runner: a queue with `standby = true` (several regions) gets only its own region's topic, and `<queue>-standby` the other regions' copies; the app receives `QUEUE_<NAME>_STANDBY` and may consume it. Modules `v0.10.0`. |
 | `v2.3.1` | `deploy-app`: smoke tests run with the Hurl container image; the `.deb` could not be installed on the current runner image (`libxml2` dependency). |
@@ -230,7 +231,7 @@ The app's own pipeline deploys it, with nothing but its `deploy/` files. The cal
   deploy:
     needs: image
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    uses: JonomaIT/pipelines/.github/workflows/deploy-app.yml@v2.4.1
+    uses: JonomaIT/pipelines/.github/workflows/deploy-app.yml@v2.5.0
     with:
       environment: production
     secrets:

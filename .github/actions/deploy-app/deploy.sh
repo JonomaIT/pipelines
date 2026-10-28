@@ -78,35 +78,43 @@ site() {
     -var "environment=$ENVIRONMENT"
 }
 
-# Hashed assets are cached for a year; index.html and config.json are always revalidated.
+# The site's buckets: the primary and, with two platform regions, its copy (origin failover).
+site_buckets() {
+  terraform -chdir="$RUNNERS/cloudfront" output -json | jq -r '.bucket.value, .failover_bucket.value | select(. != null)'
+}
+
+# Hashed assets are cached for a year; index.html and config.json are always revalidated. Every
+# bucket gets the same files: CloudFront may read any of them.
 site_files() {
   : "${SITE_DIR:?cloudfront apps need site-dir (the site artifact)}"
   local bucket distribution
-  bucket=$(terraform -chdir="$RUNNERS/cloudfront" output -raw bucket)
   distribution=$(terraform -chdir="$RUNNERS/cloudfront" output -raw distribution_id)
-  if [ -d "$SITE_DIR/assets" ]; then
-    aws s3 sync "$SITE_DIR/assets" "s3://$bucket/assets" --cache-control "public, max-age=31536000, immutable"
-  fi
-  aws s3 sync "$SITE_DIR" "s3://$bucket" --delete --exclude "assets/*" --cache-control "no-cache"
+  while read -r bucket; do
+    if [ -d "$SITE_DIR/assets" ]; then
+      aws s3 sync "$SITE_DIR/assets" "s3://$bucket/assets" --cache-control "public, max-age=31536000, immutable"
+    fi
+    aws s3 sync "$SITE_DIR" "s3://$bucket" --delete --exclude "assets/*" --cache-control "no-cache"
+    echo "Files of \`$SITE_DIR\` in \`s3://$bucket\`." >>"$GITHUB_STEP_SUMMARY"
+  done < <(site_buckets)
   aws cloudfront create-invalidation --distribution-id "$distribution" --paths "/index.html" "/config.json" >/dev/null
-  echo "Files of \`$SITE_DIR\` in \`s3://$bucket\`; \`/index.html\` and \`/config.json\` invalidated." >>"$GITHUB_STEP_SUMMARY"
+  echo "\`/index.html\` and \`/config.json\` invalidated." >>"$GITHUB_STEP_SUMMARY"
 }
 
-# The site bucket is versioned and production keeps force_destroy off: its files (a build that is
-# deployed again from the same commit) are removed here, before Terraform removes the bucket.
+# The site buckets are versioned and production keeps force_destroy off: their files (a build that
+# is deployed again from the same commit) are removed here, before Terraform removes the buckets.
 empty_site_bucket() {
   local bucket kind objects
   init cloudfront "$ENVIRONMENT/global/apps/$name"
-  bucket=$(terraform -chdir="$RUNNERS/cloudfront" output -raw bucket 2>/dev/null || true)
-  [ -n "$bucket" ] && [ "$bucket" != null ] || return 0
-  for kind in Versions DeleteMarkers; do
-    while :; do
-      objects=$(aws s3api list-object-versions --bucket "$bucket" --max-items 1000 \
-        --query "{Objects: ${kind}[].{Key: Key, VersionId: VersionId}}" --output json)
-      [ "$(jq '.Objects | length' <<<"$objects")" -gt 0 ] || break
-      aws s3api delete-objects --bucket "$bucket" --delete "$objects" >/dev/null
+  while read -r bucket; do
+    for kind in Versions DeleteMarkers; do
+      while :; do
+        objects=$(aws s3api list-object-versions --bucket "$bucket" --max-items 1000 \
+          --query "{Objects: ${kind}[].{Key: Key, VersionId: VersionId}}" --output json)
+        [ "$(jq '.Objects | length' <<<"$objects")" -gt 0 ] || break
+        aws s3api delete-objects --bucket "$bucket" --delete "$objects" >/dev/null
+      done
     done
-  done
+  done < <(site_buckets 2>/dev/null || true)
 }
 
 # tests/smoke/*.hurl against every public name, with retries while the new tasks become healthy.
