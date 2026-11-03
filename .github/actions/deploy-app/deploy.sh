@@ -22,6 +22,7 @@ regions_json=$(jq -c .regions <<<"$app")
 mapfile -t regions < <(jq -r '.regions[]' <<<"$app")
 mapfile -t hosts < <(jq -r '.hosts[]' <<<"$app")
 mapfile -t smoke_files < <(jq -r '.smoke[]' <<<"$app")
+source_dir=$(jq -r .source_dir <<<"$app")
 
 if [ "$DESTROY" = true ]; then mode=Destroy; else mode=Deploy; fi
 {
@@ -83,21 +84,41 @@ site_buckets() {
   terraform -chdir="$RUNNERS/cloudfront" output -json | jq -r '.bucket.value, .failover_bucket.value | select(. != null)'
 }
 
-# Hashed assets are cached for a year; index.html and config.json are always revalidated. Every
-# bucket gets the same files: CloudFront may read any of them.
+# Every bucket gets the same files: CloudFront may read any of them.
+#   built site (the "site" artifact of build-static): hashed assets/ cached for a year, the rest
+#                  (index.html, config.json) always revalidated; only those two are invalidated.
+#   no build (no package.json: the files of source_dir in the repo, names that do not change
+#                  between deploys): HTML, CSS, JS, JSON, XML and text always revalidated, the rest
+#                  (images, video, fonts) cached for 7 days; everything is invalidated.
 site_files() {
-  : "${SITE_DIR:?cloudfront apps need site-dir (the site artifact)}"
-  local bucket distribution
+  local bucket distribution dir="${SITE_DIR:-}" built=true
+  if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+    dir="$APP_DIR/$source_dir"
+    built=false
+  fi
+  [ -d "$dir" ] || { echo "::error::no site files: neither the site artifact nor $source_dir/ in the repo"; exit 1; }
   distribution=$(terraform -chdir="$RUNNERS/cloudfront" output -raw distribution_id)
   while read -r bucket; do
-    if [ -d "$SITE_DIR/assets" ]; then
-      aws s3 sync "$SITE_DIR/assets" "s3://$bucket/assets" --cache-control "public, max-age=31536000, immutable"
+    if [ "$built" = true ]; then
+      if [ -d "$dir/assets" ]; then
+        aws s3 sync "$dir/assets" "s3://$bucket/assets" --cache-control "public, max-age=31536000, immutable"
+      fi
+      aws s3 sync "$dir" "s3://$bucket" --delete --exclude "assets/*" --cache-control "no-cache"
+    else
+      aws s3 sync "$dir" "s3://$bucket" --delete --cache-control "public, max-age=604800"
+      aws s3 cp "$dir" "s3://$bucket/" --recursive --exclude "*" \
+        --include "*.html" --include "*.css" --include "*.js" --include "*.json" \
+        --include "*.xml" --include "*.txt" --include "*.webmanifest" --cache-control "no-cache"
     fi
-    aws s3 sync "$SITE_DIR" "s3://$bucket" --delete --exclude "assets/*" --cache-control "no-cache"
-    echo "Files of \`$SITE_DIR\` in \`s3://$bucket\`." >>"$GITHUB_STEP_SUMMARY"
+    echo "Files of \`$dir\` in \`s3://$bucket\`." >>"$GITHUB_STEP_SUMMARY"
   done < <(site_buckets)
-  aws cloudfront create-invalidation --distribution-id "$distribution" --paths "/index.html" "/config.json" >/dev/null
-  echo "\`/index.html\` and \`/config.json\` invalidated." >>"$GITHUB_STEP_SUMMARY"
+  if [ "$built" = true ]; then
+    aws cloudfront create-invalidation --distribution-id "$distribution" --paths "/index.html" "/config.json" >/dev/null
+    echo "\`/index.html\` and \`/config.json\` invalidated." >>"$GITHUB_STEP_SUMMARY"
+  else
+    aws cloudfront create-invalidation --distribution-id "$distribution" --paths "/*" >/dev/null
+    echo "Everything invalidated (\`/*\`)." >>"$GITHUB_STEP_SUMMARY"
+  fi
 }
 
 # The site buckets are versioned and production keeps force_destroy off: their files (a build that

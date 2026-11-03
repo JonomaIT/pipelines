@@ -72,6 +72,27 @@ run "one_region_one_bucket" {
   }
 }
 
+run "customer_domain_in_an_allowed_zone" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.platform
+    values = {
+      names  = ["/jonomait/production/platform/zone", "/jonomait/production/platform/regions", "/jonomait/production/platform/site-zones"]
+      values = ["joshuel.com.br", "us-east-1,sa-east-1", "cliente.com.br"]
+    }
+  }
+
+  variables {
+    hosts = ["cliente.com.br"]
+  }
+
+  assert {
+    condition     = length(local.site_zones) == 1 && contains(local.site_zones, "cliente.com.br") && one(output.public_hosts) == "cliente.com.br"
+    error_message = "A site may use the apex of a zone the platform allows (site-zones)."
+  }
+}
+
 run "other_runtime_is_rejected" {
   command = plan
 

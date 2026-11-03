@@ -17,12 +17,13 @@ locals {
 }
 
 module "site" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//cloudfront-site?ref=v0.11.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//cloudfront-site?ref=v0.12.0"
   count  = local.platform_ready ? 1 : 0
 
   name            = var.name
   environment     = var.environment
   zone            = local.zone
+  extra_zones     = local.site_zones
   hosts           = var.hosts
   spa             = var.spa
   failover_region = local.failover_region
@@ -35,13 +36,14 @@ module "site" {
 }
 
 module "dns" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.11.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.12.0"
   count  = local.platform_ready ? 1 : 0
 
-  zone   = local.zone
-  hosts  = var.hosts
-  target = module.site[0].domain_name
-  owner  = var.name
+  zone        = local.zone
+  extra_zones = local.site_zones
+  hosts       = var.hosts
+  target      = module.site[0].domain_name
+  owner       = var.name
 }
 
 # Before v2.2.0 the modules had no count.
