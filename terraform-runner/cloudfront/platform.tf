@@ -1,7 +1,9 @@
-# What the platform decides (ADR-014), read from its parameters (infrastructure
-# global/dns-cloudflare), never from the site's files: the zone of its public names, and the
-# region of the copy of the site (origin failover): the platform's first region other than
-# CloudFront's own (us-east-1), when it runs more than one.
+# What the platform decides (ADR-014), read from its parameters (infrastructure global/platform),
+# never from the site's files:
+#   - the zone of its public names, and the other zones a site may have names in (site-zones: a
+#     customer's own domain, which gets the site's own certificate);
+#   - the region of the copy of the site (origin failover): the platform's first region other
+#     than CloudFront's own (us-east-1), when it runs more than one.
 
 data "aws_ssm_parameters_by_path" "platform" {
   path = "/jonomait/${var.environment}/platform"
@@ -10,6 +12,8 @@ data "aws_ssm_parameters_by_path" "platform" {
 locals {
   platform = { for i, n in data.aws_ssm_parameters_by_path.platform.names : basename(n) => nonsensitive(data.aws_ssm_parameters_by_path.platform.values[i]) }
   zone     = lookup(local.platform, "zone", "")
+
+  site_zones = compact(split(",", lookup(local.platform, "site-zones", "")))
 
   failover_region = try([for r in split(",", lookup(local.platform, "regions", "")) : r if r != "" && r != "us-east-1"][0], null)
 }
@@ -20,7 +24,7 @@ resource "terraform_data" "platform" {
   lifecycle {
     precondition {
       condition     = local.zone != ""
-      error_message = "The platform parameters (/jonomait/${var.environment}/platform/*) are missing in us-east-1: apply infrastructure global/dns-cloudflare first."
+      error_message = "The platform parameters (/jonomait/${var.environment}/platform/*) are missing in us-east-1: apply infrastructure global/platform first."
     }
   }
 }

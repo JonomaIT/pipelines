@@ -44,5 +44,5 @@ variable "spa" {
 # --------------------------------------------- deploy/env/<account>.tfvars
 variable "hosts" {
   type        = list(string)
-  description = "Public names of the site (<label>.<zone>)"
+  description = "Public names of the site: <label>.<zone>, or the apex or <label> of a zone the platform allows (site-zones)"
 }
