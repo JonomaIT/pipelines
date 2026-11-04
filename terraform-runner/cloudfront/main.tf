@@ -4,7 +4,8 @@
 # CloudFront is global: one run per account, state key <env>/global/apps/<name>.
 #
 #   terraform init -backend-config=<account backend> -backend-config=key=<env>/global/apps/<name>
-#   terraform apply -var-file=app.hcl -var-file=<env>.tfvars -var environment=<env>
+#   terraform apply -var-file=app.hcl -var-file=<env>.tfvars \
+#     -var prefix=<prefix> -var platform_region=<primary region> -var environment=<env>
 #
 # The files are uploaded afterwards (aws s3 sync to the output buckets + invalidation). With two
 # platform regions the site has a copy in the other one, read by CloudFront when the primary
@@ -17,14 +18,15 @@ locals {
 }
 
 module "site" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//cloudfront-site?ref=v0.12.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//cloudfront-site?ref=v0.13.0"
   count  = local.platform_ready ? 1 : 0
 
+  prefix          = var.prefix
   name            = var.name
   environment     = var.environment
   zone            = local.zone
   extra_zones     = local.site_zones
-  hosts           = var.hosts
+  hosts           = local.hosts
   spa             = var.spa
   failover_region = local.failover_region
   force_destroy   = var.environment != "production"
@@ -36,12 +38,12 @@ module "site" {
 }
 
 module "dns" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.12.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.13.0"
   count  = local.platform_ready ? 1 : 0
 
   zone        = local.zone
   extra_zones = local.site_zones
-  hosts       = var.hosts
+  hosts       = local.hosts
   target      = module.site[0].domain_name
   owner       = var.name
 }

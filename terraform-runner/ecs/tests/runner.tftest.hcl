@@ -64,8 +64,10 @@ override_data {
 
 variables {
   # pipeline
+  prefix      = "jonomait"
   environment = "staging"
   region      = "us-east-1"
+  regions     = ["us-east-1"]
   image       = "traefik/whoami:v1.10.3"
   # deploy/app.hcl
   runtime = "ecs"
@@ -291,5 +293,66 @@ run "production_allows_more_than_staging" {
   assert {
     condition     = local.limits.max_capacity == 10
     error_message = "Each environment has its own limits (pipelines/policies/limits.json)."
+  }
+}
+
+# ------------------------------------------------------- no domain in the app's files
+
+run "a_label_is_a_name_under_the_platform_zone" {
+  command = plan
+
+  variables {
+    hosts = ["hello-stg"]
+    env   = { ALLOWED_ORIGINS = "https://vendas.{zone}" }
+  }
+
+  assert {
+    condition     = local.hosts == ["hello-stg.joshuel.com.br"] && one(module.dns[0].names) == "hello-stg.joshuel.com.br"
+    error_message = "A host without a dot is a label under the platform's zone."
+  }
+
+  assert {
+    condition     = local.app_env["ALLOWED_ORIGINS"] == "https://vendas.joshuel.com.br"
+    error_message = "{zone} in the app's env is the platform's zone."
+  }
+}
+
+run "the_image_is_pulled_from_the_region_of_the_run" {
+  command = plan
+
+  variables {
+    environment  = "production"
+    region       = "sa-east-1"
+    regions      = ["us-east-1", "sa-east-1"]
+    image        = "111111111111.dkr.ecr.us-east-2.amazonaws.com/svc-hello:abc123"
+    min_capacity = 2
+    slo          = { availability = 99.5, latency_p95_ms = 500 }
+  }
+
+  assert {
+    condition     = local.image == "111111111111.dkr.ecr.sa-east-1.amazonaws.com/svc-hello:abc123"
+    error_message = "Each region pulls from its own replica, whatever region the image was given with."
+  }
+}
+
+run "another_prefix_names_everything" {
+  command = plan
+
+  variables {
+    prefix = "acme"
+    hosts  = ["hello-stg"]
+  }
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.platform
+    values = {
+      names  = ["/acme/staging/platform/zone", "/acme/staging/platform/regions"]
+      values = ["acme.com", "us-east-1"]
+    }
+  }
+
+  assert {
+    condition     = local.platform_env["REGION_STATE_PARAMETER"] == "/acme/staging/platform/region-state" && one(output.public_hosts) == "hello-stg.acme.com"
+    error_message = "Another prefix and zone, the same app files: parameters under /<prefix>/<env>/, names under the platform's zone."
   }
 }

@@ -23,8 +23,8 @@ on:
       registry-region:
         type: string
         required: false
-        default: us-east-1
-        description: Primary region of the registry
+        default: ""
+        description: Primary region of the registry (default - the PRIMARY_REGION org variable)
     outputs:
       image:
         description: Pushed image (empty on pull requests)
@@ -53,7 +53,7 @@ jobs:
 
       # Only contract fields in deploy/, none of the platform's, name = repo name (ADR-014).
       - name: App contract
-        uses: JonomaIT/pipelines/.github/actions/contract-check@v2.2.0
+        uses: JonomaIT/pipelines/.github/actions/contract-check@v2.7.0
 
       - name: Build
         run: docker build --pull --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" -t "$LOCAL_TAG" "${{ inputs.context }}"
@@ -68,13 +68,13 @@ jobs:
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: arn:aws:iam::${{ fromJSON(vars.AWS_ACCOUNT_IDS)['shared-services'] }}:role/github-actions-ecr-push
-          aws-region: ${{ inputs.registry-region }}
+          aws-region: ${{ inputs.registry-region || vars.PRIMARY_REGION }}
 
       - name: Push
         id: push
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
-          REGISTRY: ${{ fromJSON(vars.AWS_ACCOUNT_IDS)['shared-services'] }}.dkr.ecr.${{ inputs.registry-region }}.amazonaws.com
+          REGISTRY: ${{ fromJSON(vars.AWS_ACCOUNT_IDS)['shared-services'] }}.dkr.ecr.${{ inputs.registry-region || vars.PRIMARY_REGION }}.amazonaws.com
         run: |
           aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
           image="$REGISTRY/$APP:$GITHUB_SHA"

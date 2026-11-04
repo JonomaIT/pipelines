@@ -1,14 +1,15 @@
-# CloudFront is global but only uses ACM certificates (and is managed) from us-east-1.
+# CloudFront is global but only uses ACM certificates (and is managed) from us-east-1: an AWS rule,
+# the same for every platform, so it is not a variable.
 provider "aws" {
   region = "us-east-1"
 
   default_tags {
     tags = {
-      "jonomait:env"        = var.environment
-      "jonomait:app"        = var.name
-      "jonomait:repo"       = var.name
-      "jonomait:component"  = "apps/${var.name}"
-      "jonomait:managed-by" = "terraform"
+      "${var.prefix}:env"        = var.environment
+      "${var.prefix}:app"        = var.name
+      "${var.prefix}:repo"       = var.name
+      "${var.prefix}:component"  = "apps/${var.name}"
+      "${var.prefix}:managed-by" = "terraform"
     }
   }
 }

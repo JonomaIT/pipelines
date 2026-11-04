@@ -3,21 +3,22 @@
 # its own, apart from the app's (recreating or removing the app never touches its data).
 #
 #   terraform init -backend-config=<account backend> -backend-config=key=<env>/cross-region/data/<name>
-#   terraform apply -var-file=deploy/data.hcl \
+#   terraform apply -var-file=deploy/data.hcl -var prefix=<prefix> \
 #     -var environment=<env> -var name=<name> -var 'regions=["us-east-1","sa-east-1"]'
 #
 # What the app gets, without writing Terraform or IAM:
-#   - every resource in every region, named jonomait-<env>-<app>-<logical name>, with the
+#   - every resource in every region, named <prefix>-<env>-<app>-<logical name>, with the
 #     protections of the data modules (encryption, TLS only, backups, deletion protection);
 #   - one IAM policy, <prefix>-data-access, with only the actions it needs, only on its resources
 #     and on the ones it declared in uses: the ECS runner attaches it to the app's task role;
-#   - one parameter per resource and region, /jonomait/<env>/<app>/env/<KIND>_<NAME>, that the ECS
+#   - one parameter per resource and region, /<prefix>/<env>/<app>/env/<KIND>_<NAME>, that the ECS
 #     runner injects as an environment variable (TABLE_SALES, QUEUE_SALES_PROCESSING, ...).
 
 locals {
   env_short  = { staging = "stg", production = "prd" }[var.environment]
-  prefix     = "jonomait-${local.env_short}-${var.name}" # jonomait-prd-svc-vendas
-  parameters = "/jonomait/${var.environment}/${var.name}"
+  base       = "${var.prefix}-${local.env_short}" # jonomait-prd
+  prefix     = "${local.base}-${var.name}"        # jonomait-prd-svc-vendas
+  parameters = "/${var.prefix}/${var.environment}/${var.name}"
   account    = data.aws_caller_identity.current.account_id
 
   # Resources of other apps: "<app>/<kind>/<name>" = access.
@@ -26,7 +27,7 @@ locals {
       app      = split("/", k)[0]
       kind     = split("/", k)[1]
       logical  = split("/", k)[2]
-      physical = "jonomait-${local.env_short}-${split("/", k)[0]}-${split("/", k)[2]}"
+      physical = "${local.base}-${split("/", k)[0]}-${split("/", k)[2]}"
       access   = access
     }
   }
@@ -35,7 +36,7 @@ locals {
   subscribe_refs = distinct(flatten([for q in var.queues : q.subscribe]))
   foreign_topics = {
     for pair in setproduct([for s in local.subscribe_refs : s if strcontains(s, "/")], var.regions) : "${pair[0]}|${pair[1]}" => {
-      physical = "jonomait-${local.env_short}-${replace(pair[0], "/", "-")}"
+      physical = "${local.base}-${replace(pair[0], "/", "-")}"
       region   = pair[1]
     }
   }
@@ -83,7 +84,7 @@ resource "terraform_data" "contract" {
 
 # ------------------------------------------------------------------ resources
 module "table" {
-  source   = "git::https://github.com/JonomaIT/terraform-modules.git//dynamodb-table?ref=v0.10.1"
+  source   = "git::https://github.com/JonomaIT/terraform-modules.git//dynamodb-table?ref=v0.13.0"
   for_each = var.tables
 
   name                = "${local.prefix}-${each.key}"
@@ -97,7 +98,7 @@ module "table" {
 }
 
 module "topic" {
-  source   = "git::https://github.com/JonomaIT/terraform-modules.git//sns-topic?ref=v0.10.1"
+  source   = "git::https://github.com/JonomaIT/terraform-modules.git//sns-topic?ref=v0.13.0"
   for_each = toset(var.topics)
 
   name    = "${local.prefix}-${each.key}"
@@ -113,7 +114,7 @@ data "aws_sns_topic" "subscribed" {
 }
 
 module "queue" {
-  source   = "git::https://github.com/JonomaIT/terraform-modules.git//sqs-queue?ref=v0.10.1"
+  source   = "git::https://github.com/JonomaIT/terraform-modules.git//sqs-queue?ref=v0.13.0"
   for_each = var.queues
 
   name               = "${local.prefix}-${each.key}"
@@ -135,7 +136,7 @@ module "queue" {
 }
 
 module "bucket" {
-  source   = "git::https://github.com/JonomaIT/terraform-modules.git//s3-bucket?ref=v0.10.1"
+  source   = "git::https://github.com/JonomaIT/terraform-modules.git//s3-bucket?ref=v0.13.0"
   for_each = var.buckets
 
   name            = "${local.prefix}-${each.key}"

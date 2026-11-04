@@ -5,11 +5,11 @@ provider "aws" {
 
   default_tags {
     tags = {
-      "jonomait:env"        = var.environment
-      "jonomait:app"        = var.name
-      "jonomait:repo"       = var.name
-      "jonomait:component"  = "data/${var.name}"
-      "jonomait:managed-by" = "terraform"
+      "${var.prefix}:env"        = var.environment
+      "${var.prefix}:app"        = var.name
+      "${var.prefix}:repo"       = var.name
+      "${var.prefix}:component"  = "data/${var.name}"
+      "${var.prefix}:managed-by" = "terraform"
     }
   }
 }

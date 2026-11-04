@@ -51,6 +51,7 @@ override_data {
 # A worker: consumes another app's topic, keeps an idempotency table and a replicated bucket, and
 # updates the other app's table.
 variables {
+  prefix      = "jonomait"
   environment = "production"
   name        = "svc-faturamento"
   regions     = ["us-east-1", "sa-east-1"]
