@@ -336,7 +336,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: plan-${{ matrix.slug }}
+          name: plan-${{ matrix.slug }}-a${{ github.run_attempt }}
           path: ${{ runner.temp }}/out/
           retention-days: 1
 
@@ -353,7 +353,18 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: plan-*
-          path: plans
+          path: plans-all
+
+      # "Re-run failed jobs" keeps the earlier attempt's artifacts in the run, under other names
+      # (-a<attempt>). Copied oldest first, so each target ends with its latest plan.
+      - name: Latest plan of each target
+        if: needs.targets.outputs.count != '0'
+        run: |
+          mkdir -p plans
+          dirs=$(find plans-all -mindepth 1 -maxdepth 1 -type d -name 'plan-*' 2>/dev/null | sort -V)
+          # A single artifact may be extracted without its own folder: the targets are right there.
+          if [ -z "$dirs" ] && [ -d plans-all ]; then cp -r plans-all/. plans/; fi
+          for d in $dirs; do cp -r "$d"/. plans/; done
 
       - name: Comment on the pull request
         if: github.event_name == 'pull_request'
@@ -418,7 +429,18 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: plan-*
-          path: plans
+          path: plans-all
+
+      # "Re-run failed jobs" keeps the earlier attempt's artifacts in the run, under other names
+      # (-a<attempt>). Copied oldest first, so each target ends with its latest plan.
+      - name: Latest plan of each target
+        if: success()
+        run: |
+          mkdir -p plans
+          dirs=$(find plans-all -mindepth 1 -maxdepth 1 -type d -name 'plan-*' 2>/dev/null | sort -V)
+          # A single artifact may be extracted without its own folder: the targets are right there.
+          if [ -z "$dirs" ] && [ -d plans-all ]; then cp -r plans-all/. plans/; fi
+          for d in $dirs; do cp -r "$d"/. plans/; done
 
       - name: Apply in order
         env:
@@ -475,7 +497,18 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: plan-*
-          path: plans
+          path: plans-all
+
+      # "Re-run failed jobs" keeps the earlier attempt's artifacts in the run, under other names
+      # (-a<attempt>). Copied oldest first, so each target ends with its latest plan.
+      - name: Latest plan of each target
+        if: needs.targets.outputs.count != '0'
+        run: |
+          mkdir -p plans
+          dirs=$(find plans-all -mindepth 1 -maxdepth 1 -type d -name 'plan-*' 2>/dev/null | sort -V)
+          # A single artifact may be extracted without its own folder: the targets are right there.
+          if [ -z "$dirs" ] && [ -d plans-all ]; then cp -r plans-all/. plans/; fi
+          for d in $dirs; do cp -r "$d"/. plans/; done
 
       - name: Open, update or close the drift issue
         env:
