@@ -27,20 +27,21 @@ mapfile -t hosts < <(jq -r '.hosts[]' <<<"$app")
 mapfile -t smoke_files < <(jq -r '.smoke[]' <<<"$app")
 source_dir=$(jq -r .source_dir <<<"$app")
 
-# The platform's zone (global/platform), read once and only when needed.
+# The platform's zone (global/platform) in $zone, read once and only when needed. Called directly,
+# never in $(...): a subshell would lose the value.
 zone=""
-platform_zone() {
+load_zone() {
   if [ -z "$zone" ]; then
     zone=$(aws ssm get-parameter --region "$PRIMARY_REGION" --name "/$PREFIX/$ENVIRONMENT/platform/zone" --query Parameter.Value --output text)
   fi
-  echo "$zone"
 }
 
 # A host without a dot is a label under the platform's zone (vendas → vendas.<zone>): the same rule
 # as the runners, here for the summary and the smoke tests.
 for i in "${!hosts[@]}"; do
   if [[ "${hosts[$i]}" != *.* ]]; then
-    hosts[i]="${hosts[$i]}.$(platform_zone)"
+    load_zone
+    hosts[i]="${hosts[$i]}.$zone"
   fi
 done
 
@@ -120,8 +121,9 @@ site_files() {
   # {zone} in config.json (the site's runtime settings, e.g. "apiUrl": "https://sales.{zone}") is
   # the platform's zone: a site's files hold no domain either.
   if [ -f "$dir/config.json" ] && grep -q '{zone}' "$dir/config.json"; then
-    sed -i "s/{zone}/$(platform_zone)/g" "$dir/config.json"
-    echo "\`config.json\`: \`{zone}\` → \`$(platform_zone)\`." >>"$GITHUB_STEP_SUMMARY"
+    load_zone
+    sed -i "s/{zone}/$zone/g" "$dir/config.json"
+    echo "\`config.json\`: \`{zone}\` → \`$zone\`." >>"$GITHUB_STEP_SUMMARY"
   fi
   distribution=$(terraform -chdir="$RUNNERS/cloudfront" output -raw distribution_id)
   while read -r bucket; do
