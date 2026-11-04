@@ -2,6 +2,16 @@
 # loading deploy/app.hcl and deploy/env/<account>.tfvars with -var-file fails on undeclared variables.
 
 # ------------------------------------------------------- from the pipeline
+variable "prefix" {
+  type        = string
+  description = "Platform prefix (PROJECT_PREFIX org variable, from the pipeline): names <prefix>-<env>-..., parameters /<prefix>/<env>/..., tags <prefix>:*"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9]{1,14}$", var.prefix))
+    error_message = "prefix must be 2-15 lowercase letters and digits."
+  }
+}
+
 variable "environment" {
   type        = string
   description = "Account being deployed (from the GitHub Environment)"
@@ -24,7 +34,7 @@ variable "region" {
 
 variable "image" {
   type        = string
-  description = "Image built once and promoted: <shared-services>.dkr.ecr.us-east-1.amazonaws.com/<name>:<sha>"
+  description = "Image built once and promoted: <shared-services>.dkr.ecr.<region>.amazonaws.com/<name>:<sha>"
 }
 
 # ----------------------------------------------------------- deploy/app.hcl
@@ -57,13 +67,13 @@ variable "health_check_path" {
 
 variable "env" {
   type        = map(string)
-  description = "Non-sensitive environment variables"
+  description = "Non-sensitive environment variables; {zone} in a value becomes the platform's zone (e.g. https://vendas.{zone})"
   default     = {}
 }
 
 variable "secrets" {
   type        = list(string)
-  description = "Secret names in Secrets Manager (jonomait/<environment>/<name>/<secret>), injected as SECRET_NAME variables"
+  description = "Secret names in Secrets Manager (<prefix>/<environment>/<name>/<secret>), injected as SECRET_NAME variables"
   default     = []
 }
 
@@ -118,13 +128,12 @@ variable "cobertura_minima" {
 # --------------------------------------------- deploy/env/<account>.tfvars
 variable "regions" {
   type        = list(string)
-  description = "Regions the app runs in, in this account (ADR-008); the first one is the primary"
-  default     = ["us-east-1"]
+  description = "Regions the app runs in, in this account (ADR-008); the first one is the primary. From deploy/env/<account>.tfvars, or the platform's primary region (the pipeline passes it)"
 }
 
 variable "hosts" {
   type        = list(string)
-  description = "Public names (must exist in dns-cloudflare); empty = internal app"
+  description = "Public names: a label (vendas → vendas.<platform zone>) or a full name in a zone the platform allows; empty = internal app"
   default     = []
 }
 

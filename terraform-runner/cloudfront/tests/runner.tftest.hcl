@@ -31,10 +31,12 @@ override_data {
 }
 
 variables {
-  environment = "production"
-  runtime     = "cloudfront"
-  name        = "web-app"
-  hosts       = ["app.joshuel.com.br"]
+  prefix          = "jonomait"
+  platform_region = "us-east-1"
+  environment     = "production"
+  runtime         = "cloudfront"
+  name            = "web-app"
+  hosts           = ["app.joshuel.com.br"]
 }
 
 run "site_and_its_name" {
@@ -121,4 +123,30 @@ run "missing_platform_parameters_are_refused" {
   }
 
   expect_failures = [terraform_data.platform]
+}
+
+run "a_label_is_a_name_under_the_platform_zone" {
+  command = plan
+
+  variables {
+    hosts = ["app"]
+  }
+
+  assert {
+    condition     = local.hosts == ["app.joshuel.com.br"] && one(output.public_hosts) == "app.joshuel.com.br"
+    error_message = "A host without a dot is a label under the platform's zone."
+  }
+}
+
+run "platform_read_in_its_primary_region" {
+  command = plan
+
+  variables {
+    platform_region = "sa-east-1"
+  }
+
+  assert {
+    condition     = data.aws_ssm_parameters_by_path.platform.region == "sa-east-1"
+    error_message = "The platform's parameters are read in its primary region, not in CloudFront's."
+  }
 }

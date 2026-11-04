@@ -1,8 +1,10 @@
 """Tests of contract/app.py: python3 -m unittest discover -s contract/tests"""
 
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import describe, string_list  # noqa: E402
@@ -35,6 +37,7 @@ class Describe(unittest.TestCase):
             "smoke": ["tests/smoke/vendas.hurl"],
         })
 
+    @mock.patch.dict(os.environ, {"PRIMARY_REGION": "sa-east-1"})
     def test_runner_defaults_when_the_app_lists_nothing(self):
         app = repo({
             "deploy/app.hcl": 'runtime = "cloudfront"\nname = "web-loja"\nsource_dir = "dist"\n',
@@ -42,7 +45,13 @@ class Describe(unittest.TestCase):
         })
         d = describe(app, "production")
         self.assertEqual((d["regions"], d["hosts"], d["source_dir"], d["data"], d["smoke"]),
-                         (["us-east-1"], [], "dist", False, []))
+                         (["sa-east-1"], [], "dist", False, []))
+
+    @mock.patch.dict(os.environ, {"PRIMARY_REGION": ""})
+    def test_no_regions_and_no_primary_region_is_refused(self):
+        app = repo({"deploy/app.hcl": ECS_APP, "deploy/env/production.tfvars": "\n"})
+        with self.assertRaisesRegex(SystemExit, "PRIMARY_REGION"):
+            describe(app, "production")
 
     def test_an_account_without_tfvars_is_refused(self):
         app = repo({"deploy/app.hcl": ECS_APP, "deploy/env/production.tfvars": "\n"})

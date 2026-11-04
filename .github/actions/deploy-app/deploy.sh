@@ -12,6 +12,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" # this repo, at th
 RUNNERS="$ROOT/terraform-runner"
 APP_DIR="$PWD"
 : "${ENVIRONMENT:?}" "${GITHUB_STEP_SUMMARY:=/dev/stdout}"
+# The platform's identity (org variables PROJECT_PREFIX, STATE_REGION, PRIMARY_REGION).
+: "${PREFIX:?org variable PROJECT_PREFIX}" "${STATE_REGION:?org variable STATE_REGION}" "${PRIMARY_REGION:?org variable PRIMARY_REGION}"
+export PRIMARY_REGION # the contract's default region
 DESTROY="${DESTROY:-false}"
 HURL_IMAGE="ghcr.io/orange-opensource/hurl:6.1.1" # the .deb depends on the runner's libxml2
 
@@ -24,6 +27,18 @@ mapfile -t hosts < <(jq -r '.hosts[]' <<<"$app")
 mapfile -t smoke_files < <(jq -r '.smoke[]' <<<"$app")
 source_dir=$(jq -r .source_dir <<<"$app")
 
+# A host without a dot is a label under the platform's zone (vendas → vendas.<zone>): the same rule
+# as the runners, here for the summary and the smoke tests.
+zone=""
+for i in "${!hosts[@]}"; do
+  if [[ "${hosts[$i]}" != *.* ]]; then
+    if [ -z "$zone" ]; then
+      zone=$(aws ssm get-parameter --region "$PRIMARY_REGION" --name "/$PREFIX/$ENVIRONMENT/platform/zone" --query Parameter.Value --output text)
+    fi
+    hosts[i]="${hosts[$i]}.$zone"
+  fi
+done
+
 if [ "$DESTROY" = true ]; then mode=Destroy; else mode=Deploy; fi
 {
   echo "### $mode of \`$name\` in $ENVIRONMENT"
@@ -35,7 +50,7 @@ if [ "$DESTROY" = true ]; then mode=Destroy; else mode=Deploy; fi
 # init <runner> <state key>: the runner's directory, on the state of this app in this account.
 init() {
   terraform -chdir="$RUNNERS/$1" init -reconfigure -input=false -no-color \
-    -backend-config="bucket=jonomait-$ENVIRONMENT-tfstate" -backend-config="region=us-east-1" \
+    -backend-config="bucket=$PREFIX-$ENVIRONMENT-tfstate" -backend-config="region=$STATE_REGION" \
     -backend-config="key=$2"
 }
 
@@ -46,7 +61,7 @@ step() {
   if [ "$DESTROY" = true ]; then mode=(-destroy); fi
   echo "::group::$title"
   init "$runner" "$key"
-  terraform -chdir="$RUNNERS/$runner" plan -input=false -no-color -lock-timeout=5m "${mode[@]}" -out=tfplan "$@"
+  terraform -chdir="$RUNNERS/$runner" plan -input=false -no-color -lock-timeout=5m "${mode[@]}" -out=tfplan "$@" -var "prefix=$PREFIX"
   {
     echo "#### $title"
     echo '```'
@@ -69,14 +84,14 @@ ecs() {
   : "${IMAGE_TAG:?ecs apps need image-tag}" "${REGISTRY_ACCOUNT:?ecs apps need registry-account}"
   step ecs "$ENVIRONMENT/$region/apps/$name" "app · $region" \
     -var-file="$APP_DIR/deploy/app.hcl" -var-file="$APP_DIR/deploy/env/$ENVIRONMENT.tfvars" \
-    -var "environment=$ENVIRONMENT" -var "region=$region" \
+    -var "environment=$ENVIRONMENT" -var "region=$region" -var "regions=$regions_json" \
     -var "image=$REGISTRY_ACCOUNT.dkr.ecr.$region.amazonaws.com/$name:$IMAGE_TAG"
 }
 
 site() {
   step cloudfront "$ENVIRONMENT/global/apps/$name" "site · $ENVIRONMENT" \
     -var-file="$APP_DIR/deploy/app.hcl" -var-file="$APP_DIR/deploy/env/$ENVIRONMENT.tfvars" \
-    -var "environment=$ENVIRONMENT"
+    -var "environment=$ENVIRONMENT" -var "platform_region=$PRIMARY_REGION"
 }
 
 # The site's buckets: the primary and, with two platform regions, its copy (origin failover).

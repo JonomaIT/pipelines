@@ -1,6 +1,21 @@
 # Every field a static site may declare (Contrato da app, runtime cloudfront).
 
 # ------------------------------------------------------- from the pipeline
+variable "prefix" {
+  type        = string
+  description = "Platform prefix (PROJECT_PREFIX org variable, from the pipeline): names <prefix>-<env>-..., parameters /<prefix>/<env>/..., tags <prefix>:*"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9]{1,14}$", var.prefix))
+    error_message = "prefix must be 2-15 lowercase letters and digits."
+  }
+}
+
+variable "platform_region" {
+  type        = string
+  description = "Primary region of the platform (PRIMARY_REGION org variable, from the pipeline): where its parameters are read"
+}
+
 variable "environment" {
   type        = string
   description = "Account being deployed (from the GitHub Environment)"
@@ -44,5 +59,5 @@ variable "spa" {
 # --------------------------------------------- deploy/env/<account>.tfvars
 variable "hosts" {
   type        = list(string)
-  description = "Public names of the site: <label>.<zone>, or the apex or <label> of a zone the platform allows (site-zones)"
+  description = "Public names of the site: a label (vendas → vendas.<platform zone>), or the apex or <label> of a zone the platform allows (site-zones)"
 }

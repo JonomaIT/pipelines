@@ -2,8 +2,8 @@
 # pipeline adds environment, region and image, and this calls the ecs-service pattern.
 #
 #   terraform init -backend-config=<account backend> -backend-config=key=<env>/<region>/apps/<name>
-#   terraform apply -var-file=app.hcl -var-file=<env>.tfvars \
-#     -var environment=<env> -var region=<region> -var image=<image>
+#   terraform apply -var-file=app.hcl -var-file=<env>.tfvars -var prefix=<prefix> \
+#     -var environment=<env> -var region=<region> -var 'regions=[...]' -var image=<image>
 #
 # The contract rules (region listed, production with slo and two tasks) are variable validations:
 # they stop the plan. A check block would only warn and let the deploy through.
@@ -11,25 +11,33 @@
 # Secrets are referenced by name; a missing one fails the plan with a clear error.
 data "aws_secretsmanager_secret" "app" {
   for_each = toset(var.secrets)
-  name     = "jonomait/${var.environment}/${var.name}/${each.value}"
+  name     = "${var.prefix}/${var.environment}/${var.name}/${each.value}"
 }
 
 # The app's data (ADR-011), published in this region by the data runner: environment variables
-# (/jonomait/<env>/<name>/env/<VAR>) and the data-access policy (/jonomait/<env>/<name>/iam/*).
+# (/<prefix>/<env>/<name>/env/<VAR>) and the data-access policy (/<prefix>/<env>/<name>/iam/*).
 # An app without deploy/data.hcl has none, and gets none. Plain String parameters (names, URLs,
 # ARNs), never secrets: those come from secrets.
 data "aws_ssm_parameters_by_path" "data_env" {
-  path = "/jonomait/${var.environment}/${var.name}/env"
+  path = "/${var.prefix}/${var.environment}/${var.name}/env"
 }
 
 data "aws_ssm_parameters_by_path" "data_iam" {
-  path = "/jonomait/${var.environment}/${var.name}/iam"
+  path = "/${var.prefix}/${var.environment}/${var.name}/iam"
 }
 
 locals {
   # Images from the platform registry are replicated to every region: each region pulls from its
-  # own copy (DR: a region never depends on another to start its tasks).
-  image = replace(var.image, ".dkr.ecr.us-east-1.amazonaws.com/", ".dkr.ecr.${var.region}.amazonaws.com/")
+  # own copy (DR: a region never depends on another to start its tasks), whatever region the image
+  # was given with.
+  image = replace(var.image, "/\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com//", ".dkr.ecr.${var.region}.amazonaws.com/")
+
+  # Public names: a label is a name under the platform's zone (vendas → vendas.<zone>), so an app
+  # never writes the domain; a full name stays as it is (a customer's domain, site-zones).
+  hosts = [for h in var.hosts : strcontains(h, ".") ? h : "${h}.${local.zone}"]
+
+  # {zone} in the app's env is the platform's zone (e.g. ALLOWED_ORIGINS = "https://vendas.{zone}").
+  app_env = { for k, v in var.env : k => replace(v, "{zone}", local.zone) }
 
   data_env = {
     for i, n in data.aws_ssm_parameters_by_path.data_env.names : basename(n) => nonsensitive(data.aws_ssm_parameters_by_path.data_env.values[i])
@@ -38,7 +46,7 @@ locals {
 
   # What the platform tells every app: where to read the state of its region (ADR-012).
   platform_env = {
-    REGION_STATE_PARAMETER = "/jonomait/${var.environment}/platform/region-state"
+    REGION_STATE_PARAMETER = "/${var.prefix}/${var.environment}/platform/region-state"
   }
 }
 
@@ -55,13 +63,14 @@ resource "terraform_data" "env_contract" {
 }
 
 module "app" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//ecs-service?ref=v0.9.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//ecs-service?ref=v0.13.0"
 
+  prefix      = var.prefix
   name        = var.name
   environment = var.environment
   image       = local.image
   port        = var.port
-  hosts       = var.hosts
+  hosts       = local.hosts
 
   cpu               = var.cpu
   memory            = var.memory
@@ -70,7 +79,7 @@ module "app" {
   cpu_target        = var.cpu_target
   health_check_path = var.health_check_path
 
-  environment_variables = merge(var.env, local.data_env, local.platform_env)
+  environment_variables = merge(local.app_env, local.data_env, local.platform_env)
   secrets               = { for s, d in data.aws_secretsmanager_secret.app : upper(replace(s, "-", "_")) => d.arn }
   task_policy_arns      = local.data_policies
 
@@ -88,11 +97,11 @@ locals {
 }
 
 module "dns" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.9.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.13.0"
   count  = local.dns_owner ? 1 : 0
 
   zone   = local.zone
-  hosts  = var.hosts
+  hosts  = local.hosts
   target = local.ingress
   owner  = var.name
 }

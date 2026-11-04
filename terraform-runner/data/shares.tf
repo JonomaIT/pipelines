@@ -21,7 +21,7 @@ locals {
   # What each owner shares: "<app>/<kind>/<name>/<consumer>" = access (from its data runner).
   granted = merge([
     for app, found in data.aws_ssm_parameters_by_path.shares : {
-      for i, n in found.names : "${app}/${trimprefix(n, "/jonomait/${var.environment}/${app}/shares/")}" => nonsensitive(found.values[i])
+      for i, n in found.names : "${app}/${trimprefix(n, "/${var.prefix}/${var.environment}/${app}/shares/")}" => nonsensitive(found.values[i])
     }
   ]...)
 
@@ -33,7 +33,7 @@ data "aws_ssm_parameters_by_path" "shares" {
   for_each = toset(local.producers)
 
   region    = var.regions[0]
-  path      = "/jonomait/${var.environment}/${each.key}/shares"
+  path      = "/${var.prefix}/${var.environment}/${each.key}/shares"
   recursive = true
 }
 

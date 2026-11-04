@@ -3,7 +3,8 @@
 
     python3 contract/app.py --environment production path/to/app-repo
 
-Prints JSON: runtime, name, regions (from deploy/env/<account>.tfvars; the first is the primary),
+Prints JSON: runtime, name, regions (from deploy/env/<account>.tfvars, or the platform's primary
+region from PRIMARY_REGION; the first is the primary),
 hosts, source_dir (cloudfront), data (deploy/data.hcl exists) and smoke (tests/smoke/*.hurl).
 Run contract/check.py first: this only reads, it does not validate the contract.
 
@@ -12,13 +13,13 @@ Standard library only: it runs in any CI image.
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
 from check import top_level
 
-DEFAULT_REGIONS = ["us-east-1"]  # the runners' default when an app does not list regions
 DEFAULT_SOURCE_DIR = "site"  # the CloudFront runner's default
 
 
@@ -29,6 +30,14 @@ def string_list(text, key):
         return None
     body = re.sub(r"(#|//).*", "", m.group(1))  # comments inside the list
     return re.findall(r'"([^"]*)"', body)
+
+
+def default_regions():
+    """An app that lists no regions runs in the platform's primary region (PRIMARY_REGION)."""
+    primary = os.environ.get("PRIMARY_REGION", "").strip()
+    if not primary:
+        raise SystemExit("The app lists no regions and PRIMARY_REGION is not set (org variable): list regions in deploy/env/<account>.tfvars.")
+    return [primary]
 
 
 def describe(repo, environment):
@@ -50,7 +59,7 @@ def describe(repo, environment):
     return {
         "runtime": app.get("runtime"),
         "name": app.get("name"),
-        "regions": listed("regions") or DEFAULT_REGIONS,
+        "regions": listed("regions") or default_regions(),
         "hosts": listed("hosts") or [],
         "source_dir": app.get("source_dir") or DEFAULT_SOURCE_DIR,
         "data": (repo / "deploy" / "data.hcl").is_file(),

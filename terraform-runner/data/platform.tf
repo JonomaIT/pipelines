@@ -4,7 +4,7 @@
 
 data "aws_ssm_parameters_by_path" "platform" {
   region = var.regions[0]
-  path   = "/jonomait/${var.environment}/platform"
+  path   = "/${var.prefix}/${var.environment}/platform"
 }
 
 locals {
@@ -25,7 +25,7 @@ resource "terraform_data" "platform" {
   lifecycle {
     precondition {
       condition     = length(local.platform_regions) > 0
-      error_message = "The platform parameters (/jonomait/${var.environment}/platform/*) are missing in ${var.regions[0]}: apply infrastructure global/dns-cloudflare first."
+      error_message = "The platform parameters (/${var.prefix}/${var.environment}/platform/*) are missing in ${var.regions[0]}: apply infrastructure global/platform first."
     }
 
     precondition {

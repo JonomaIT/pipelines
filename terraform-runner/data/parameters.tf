@@ -1,5 +1,5 @@
 # How the app finds its data without knowing a name, a URL or an ARN: one parameter per resource
-# and region, /jonomait/<env>/<app>/env/<KIND>_<NAME>, with that region's value. The ECS runner
+# and region, /<prefix>/<env>/<app>/env/<KIND>_<NAME>, with that region's value. The ECS runner
 # reads them by path and injects them as environment variables; the app reads os.environ.
 #
 #   table  sales          → TABLE_SALES            = table name (the same in every region)

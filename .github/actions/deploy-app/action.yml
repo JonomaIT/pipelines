@@ -2,7 +2,8 @@ name: deploy-app
 description: >-
   Deploys (or destroys) an app in one account with this repo's runners, from its deploy/ files:
   data, then the app in each region (ecs) or the site (cloudfront), then smoke tests. Used by the
-  deploy-app reusable workflow; expects the account's AWS credentials and terraform on PATH.
+  deploy-app reusable workflow; expects the account's AWS credentials, terraform on PATH and the
+  platform's identity in the environment (PREFIX, STATE_REGION, PRIMARY_REGION: org variables).
 inputs:
   environment:
     description: The account (deploy/env/<account>.tfvars)

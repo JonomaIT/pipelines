@@ -68,14 +68,27 @@ A target never deployed that cannot be planned alone (it reads something an earl
 
 Roles: `github-actions-<repo>-plan` (read-only; pull requests and `main`) for plans and drift; `github-actions-<repo>` (write) only in the apply job, inside the account's GitHub Environment. Plan files are kept as artifacts for 1 day, only by runs that apply (never on pull requests).
 
-*What changed*: a tfvars runs itself; a change in a component's code runs every tfvars of it; a change in `backends/<account>.tfbackend` runs everything in that account. Within a component the primary region goes first (its ACM validation record serves the other regions).
+*What changed*: a tfvars runs itself; a change in a component's code runs every tfvars of it. Within a component the primary region goes first (its ACM validation record serves the other regions).
 
-Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** org variable (`{"production": "…"}`; accounts not listed are skipped) and a GitHub Environment per account. Components with Cloudflare receive `CLOUDFLARE_API_TOKEN`.
+*Only a manual run creates.* A push or a pull request changes what is deployed and leaves alone a component that is not (no state, e.g. the lab after a destroy): its plan says "not deployed: left as it is" and the apply skips it. Bringing an environment up is a deliberate act (Actions → Deploy → Run workflow), never a side effect of a merge that touched its code.
+
+Needs the platform's identity in **org variables** and a GitHub Environment per account. Components with Cloudflare receive `CLOUDFLARE_API_TOKEN`.
+
+| Org variable | Example | Used for |
+|---|---|---|
+| `PROJECT_PREFIX` | `jonomait` | `TF_VAR_prefix` of every component and runner: names `<prefix>-<env>-…`, parameters `/<prefix>/<env>/…`, tags `<prefix>:*`; state bucket `<prefix>-<account>-tfstate` |
+| `STATE_REGION` | `us-east-1` | region of the state buckets |
+| `PRIMARY_REGION` | `us-east-1` | default region of the AWS calls, applied first; an app that lists no regions runs here |
+| `AWS_ACCOUNT_IDS` | `{"production": "…"}` | account of each environment; accounts not listed are skipped |
+| `TERRAFORM_VERSION` | `1.14.1` | Terraform of every job |
+
+A new platform (another name, another domain) is these variables, the bootstrap of `organization` and the zone in `infrastructure` `global/platform`: no code changes. The only literal left is the GitHub organization in `uses:` and module `source` (GitHub and Terraform do not take variables there).
 
 ## Versions
 
 | Tag | Change |
 |---|---|
+| `v2.7.0` | **The platform's identity in org variables, no name in the code.** `PROJECT_PREFIX`, `STATE_REGION`, `PRIMARY_REGION`: every component and runner gets `prefix` (names, parameters, tags, namespace), the state bucket is derived (`<prefix>-<account>-tfstate`: no more `backends/*.tfbackend`), the default region comes from the platform. **`hosts` may be labels** (`vendas` → `vendas.<zone>`) and `{zone}` works in `env`: an app's files hold no domain. **A push never creates a component**: what is not deployed (the lab, torn down) is left as it is; only a manual run brings it up. ECS runner: `regions` from the pipeline (no `us-east-1` default), the image pulled from the region of the run whatever region it was given with; modules `v0.13.0` in every runner. CloudFront runner: the platform's parameters read in its primary region. Contract: `prefix` and `platform_region` are the platform's. The Cloudflare secret is `CLOUDFLARE_API_TOKEN` everywhere. Same names and resources as `v2.6.0`: deployed components and sites plan no changes. |
 | `v2.6.0` | **Customer domains and a platform that outlives the lab.** CloudFront runner on modules `v0.12.0`: a site may use the apex or a label of a zone the platform allows (`site-zones` parameter); such a name gets the site's own certificate, validated in Cloudflare. `deploy-app`: a site without a build (no `package.json`) is uploaded from `source_dir` in the repo (HTML/CSS/JS/JSON/XML/text revalidated, the rest cached 7 days, everything invalidated). `terraform-deploy`: `persistent` input, components a destroy of everything leaves alone. |
 | `v2.5.1` | CloudFront runner: sites use every edge location (`PriceClass_All`), so users in South America are served from there. No fixed cost, a slightly higher price per GB. |
 | `v2.5.0` | **Static sites survive their bucket's region.** CloudFront runner on modules `v0.11.0`: with two platform regions the site gets a copy of its bucket in the region other than `us-east-1`, and CloudFront fails over to it (origin group, 5xx or no answer). `deploy-app` uploads every build to both buckets and empties both on destroy. |
@@ -102,33 +115,33 @@ Needs: `backends/<account>.tfbackend` in the caller, the **`AWS_ACCOUNT_IDS`** o
 
 ```bash
 cd terraform-runner/ecs
-export AWS_PROFILE=jonomait-production
+export AWS_PROFILE=jonomait-production TF_VAR_prefix=jonomait
 terraform init -reconfigure \
-  -backend-config=bucket=jonomait-production-tfstate -backend-config=region=us-east-1 \
+  -backend-config=bucket=$TF_VAR_prefix-production-tfstate -backend-config=region=us-east-1 \
   -backend-config=key=production/us-east-1/apps/svc-sales-api
 terraform plan \
   -var-file=../../../svc-sales-api/deploy/app.hcl \
   -var-file=../../../svc-sales-api/deploy/env/production.tfvars \
-  -var environment=production -var region=us-east-1 \
+  -var environment=production -var region=us-east-1 -var 'regions=["us-east-1","sa-east-1"]' \
   -var image=<image>
 ```
 
 | From | Fields |
 |---|---|
-| the pipeline | `environment` (GitHub Environment), `region` (one job per region in `regions`), `image` (built once, promoted) |
+| the pipeline | `prefix` (`PROJECT_PREFIX`), `environment` (GitHub Environment), `region` (one job per region in `regions`), `regions`, `image` (built once, promoted) |
 | `deploy/app.hcl` | `runtime`, `name`, `port`, `health_check_path`, `env`, `secrets`, `slo` (`availability`, `latency_p95_ms`), `min_coverage` |
 | the data runner | the app's data variables and data-access policy (when it has `deploy/data.hcl`) |
 | `deploy/env/<account>.tfvars` | `regions`, `hosts`, `cpu`, `memory`, `min_capacity`, `max_capacity`, `cpu_target`, `off_hours` |
 
-**Public names (ADR-010):** the run of the primary region (first in `regions`) creates each `hosts` entry as a proxied CNAME to the environment's entry (`ingress.<zone>` in production, `ingress-<env>.<zone>` elsewhere), with the `app-dns` pattern: owner in the record comment, reserved names and names owned by another app refused. Needs `CLOUDFLARE_API_TOKEN` (in the app pipeline: a token that can only edit DNS).
+**Public names (ADR-010):** a host is a **label** (`hosts = ["vendas"]` → `vendas.<platform zone>`), so an app never writes the domain; a full name is for a customer's zone (`site-zones`). In `env`, `{zone}` is the platform's zone (`ALLOWED_ORIGINS = "https://vendas.{zone}"`). The run of the primary region (first in `regions`) creates each `hosts` entry as a proxied CNAME to the environment's entry (`ingress.<zone>` in production, `ingress-<env>.<zone>` elsewhere), with the `app-dns` pattern: owner in the record comment, reserved names and names owned by another app refused. Needs `CLOUDFLARE_API_TOKEN` (in the app pipeline: a token that can only edit DNS).
 
-Checks at plan time: `runtime = "ecs"`, production with `min_capacity >= 2` and an `slo`, the region listed in `regions`, every secret existing in Secrets Manager (`jonomait/<env>/<name>/<secret>`), `env` not shadowing a variable the platform injects. Staging runs on Fargate Spot, production on Fargate.
+Checks at plan time: `runtime = "ecs"`, production with `min_capacity >= 2` and an `slo`, the region listed in `regions`, every secret existing in Secrets Manager (`<prefix>/<env>/<name>/<secret>`), `env` not shadowing a variable the platform injects. Staging runs on Fargate Spot, production on Fargate.
 
 **What the app receives besides its own `env`:**
 
 | Variable | From |
 |---|---|
-| `TABLE_*`, `TOPIC_*`, `QUEUE_*`, `BUCKET_*` | its data, published by the data runner in this region (`/jonomait/<env>/<name>/env/*`); the task role gets the `…-data-access` policy (`/jonomait/<env>/<name>/iam/*`) |
+| `TABLE_*`, `TOPIC_*`, `QUEUE_*`, `BUCKET_*` | its data, published by the data runner in this region (`/<prefix>/<env>/<name>/env/*`); the task role gets the `…-data-access` policy (`/<prefix>/<env>/<name>/iam/*`) |
 | `REGION_STATE_PARAMETER` | the platform: parameter holding `ACTIVE` or `PASSIVE` for this region (ADR-012); the task role may read it |
 
 State key: `<env>/<region>/apps/<name>`, in the bucket of the account being deployed.
@@ -156,7 +169,7 @@ uses = {
 ```bash
 cd terraform-runner/data
 terraform init -backend-config=<account backend> -backend-config=key=production/cross-region/data/svc-faturamento
-terraform plan -var-file=../../../svc-faturamento/deploy/data.hcl \
+terraform plan -var-file=../../../svc-faturamento/deploy/data.hcl -var prefix=jonomait \
   -var environment=production -var name=svc-faturamento -var 'regions=["us-east-1","sa-east-1"]'
 ```
 
@@ -169,11 +182,11 @@ terraform plan -var-file=../../../svc-faturamento/deploy/data.hcl \
 | `buckets` | S3 bucket `<name>-<region>`, replicated both ways | read-write |
 | `uses` | nothing new: access to another app's resource, which must exist | `read`, `write` or `read-write` |
 
-Names are `jonomait-<env>-<app>-<logical name>`. The **`…-data-access`** policy lists only those actions on those ARNs (no wildcards, no `Scan`), and the plan shows it in the `permissions` output. Each resource is published as `/jonomait/<env>/<app>/env/<KIND>_<NAME>` and injected by the ECS runner (`TABLE_IDEMPOTENCY`, `QUEUE_PEDIDOS`, `BUCKET_NOTAS`, `TABLE_PEDIDOS`).
+Names are `<prefix>-<env>-<app>-<logical name>`. The **`…-data-access`** policy lists only those actions on those ARNs (no wildcards, no `Scan`), and the plan shows it in the `permissions` output. Each resource is published as `/jonomait/<env>/<app>/env/<KIND>_<NAME>` and injected by the ECS runner (`TABLE_IDEMPOTENCY`, `QUEUE_PEDIDOS`, `BUCKET_NOTAS`, `TABLE_PEDIDOS`).
 
 Refused at plan time, with a message saying what to fix: two resources giving the same variable, a queue subscribing to an own topic not in `topics`, `uses` naming the app itself or a resource that does not exist, malformed names.
 
-**Another app's data needs its owner's consent** (ADR-014). The owner lists who may use each resource in its own `deploy/data.hcl`, and its data runner publishes it (`/jonomait/<env>/<app>/shares/<kind>/<name>/<consumer>`). A consumer's `uses`, and a queue's `subscribe` to another app's topic (a read), work only with a share of at least that access:
+**Another app's data needs its owner's consent** (ADR-014). The owner lists who may use each resource in its own `deploy/data.hcl`, and its data runner publishes it (`/<prefix>/<env>/<app>/shares/<kind>/<name>/<consumer>`). A consumer's `uses`, and a queue's `subscribe` to another app's topic (a read), work only with a share of at least that access:
 
 ```hcl
 # deploy/data.hcl of the owner (svc-pedidos)
@@ -183,7 +196,7 @@ shares = {
 }
 ```
 
-Data protection follows the platform, not the app: only the parameter `/jonomait/<env>/platform/allow-destroy` (`true` in labs, written by `infrastructure`) turns deletion protection off and lets buckets with objects be destroyed. Order: the data of an app before the app; a producer's data (and its shares) before its consumers'; on destroy, the reverse.
+Data protection follows the platform, not the app: only the parameter `/<prefix>/<env>/platform/allow-destroy` (`true` in labs, written by `infrastructure`) turns deletion protection off and lets buckets with objects be destroyed. Order: the data of an app before the app; a producer's data (and its shares) before its consumers'; on destroy, the reverse.
 
 ## Guardrails (ADR-014)
 
@@ -191,7 +204,7 @@ Self-service with limits: the app declares values, the platform decides what is 
 
 | Guardrail | Where | What happens |
 |---|---|---|
-| Platform values out of reach | runners read `/jonomait/<env>/platform/{zone,regions,allow-destroy}` (from `infrastructure` `global/dns-cloudflare`) | an app cannot move its names to another zone, use a region the platform does not run, or turn its data protection off; missing parameters stop the plan ("apply global/dns-cloudflare first") |
+| Platform values out of reach | runners read `/<prefix>/<env>/platform/{zone,regions,allow-destroy,site-zones}` (from `infrastructure` `global/platform`); `prefix` or `zone` set in an app's files is refused by the contract check | an app cannot move its names to another zone, use a region the platform does not run, or turn its data protection off; missing parameters stop the plan ("apply global/dns-cloudflare first") |
 | Contract fields only | `contract-check` action (`contract/check.py`, `contract/schema.json`), first step of `build-static` and `build-push` | a field outside the contract (`cpus = 4`), a platform field (`zone`, `allow_destroy`) or `name` ≠ repo fails the pull request with the fix. Terraform alone would only warn and ignore them |
 | Limits per environment | `policies/limits.json`, checked by the ECS and data runners | above the limit of CPU, memory, tasks or data resources per kind, the plan fails: use less or ask for an exception |
 | Consent for shared data | `shares` in the owner's `deploy/data.hcl` | `uses` and cross-app `subscribe` need the owner's share |
@@ -233,11 +246,11 @@ The app's own pipeline deploys it, with nothing but its `deploy/` files. The cal
   deploy:
     needs: image
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    uses: JonomaIT/pipelines/.github/workflows/deploy-app.yml@v2.6.0
+    uses: JonomaIT/pipelines/.github/workflows/deploy-app.yml@v2.7.0
     with:
       environment: production
     secrets:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_JONOMA }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 ```
 
 | Runtime | Order | State keys |
@@ -253,7 +266,7 @@ The app's own pipeline deploys it, with nothing but its `deploy/` files. The cal
 
 ## CloudFront runner
 
-`terraform-runner/cloudfront`: static sites (`runtime = "cloudfront"`). Creates the private bucket and the distribution (`cloudfront-site`) and the site's public names pointing at it (`app-dns`). Global: one run per account, in us-east-1, state key `<env>/global/apps/<name>`. The files are uploaded afterwards (S3 sync with long cache, HTML/CSS/JS with `no-cache`, CloudFront invalidation).
+`terraform-runner/cloudfront`: static sites (`runtime = "cloudfront"`). Creates the private bucket and the distribution (`cloudfront-site`) and the site's public names pointing at it (`app-dns`). Global: one run per account, in us-east-1 (CloudFront only takes certificates from there: an AWS rule), state key `<env>/global/apps/<name>`; the platform's parameters are read in `PRIMARY_REGION`. The files are uploaded afterwards (S3 sync with long cache, HTML/CSS/JS with `no-cache`, CloudFront invalidation).
 
 ## Next
 
