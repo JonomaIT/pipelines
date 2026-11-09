@@ -19,7 +19,7 @@ locals {
 }
 
 module "site" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//cloudfront-site?ref=v0.15.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//cloudfront-site?ref=v0.16.0"
   count  = local.platform_ready ? 1 : 0
 
   prefix          = var.prefix
@@ -41,7 +41,7 @@ module "site" {
 }
 
 module "dns" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.15.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.16.0"
   count  = local.platform_ready ? 1 : 0
 
   zone        = local.zone

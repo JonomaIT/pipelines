@@ -31,7 +31,7 @@ locals {
 }
 
 module "api" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//lambda-function?ref=v0.15.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//lambda-function?ref=v0.16.0"
   count  = local.api ? 1 : 0
 
   prefix          = var.prefix
