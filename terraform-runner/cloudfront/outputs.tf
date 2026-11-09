@@ -17,3 +17,8 @@ output "public_hosts" {
   description = "Public names of the site"
   value       = one(module.dns[*].names)
 }
+
+output "api_function" {
+  description = "The API's Lambda function (null without an API)"
+  value       = one(module.api[*].function_name)
+}

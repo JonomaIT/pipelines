@@ -70,12 +70,16 @@ class Contract(unittest.TestCase):
         errors = check(repo({"deploy/app.hcl": ECS_APP}), "svc-outra")
         self.assertTrue(any("must be the repo name" in e for e in errors))
 
-    def test_a_site_has_no_data(self):
+    def test_a_site_with_an_api_has_data(self):
         site = repo({
-            "deploy/app.hcl": 'runtime = "cloudfront"\nname = "web-loja"\nsource_dir = "dist"\nspa = true\n',
-            "deploy/data.hcl": "tables = {}\n",
+            "deploy/app.hcl": 'runtime = "cloudfront"\nname = "web-loja"\nsource_dir = "dist"\nspa = true\napi = { source_dir = "api", handler = "index.handler" }\n',
+            "deploy/data.hcl": 'tables = { progress = { hash_key = "user", range_key = "card" } }\n',
         })
-        self.assertTrue(any("deploy/data.hcl: not part of the cloudfront contract" in e for e in check(site, "web-loja")))
+        self.assertEqual(check(site, "web-loja"), [])
+
+    def test_a_site_cannot_choose_where_its_api_code_comes_from(self):
+        site = repo({"deploy/app.hcl": 'runtime = "cloudfront"\nname = "web-loja"\napp_dir = "/etc"\n'})
+        self.assertTrue(any("app_dir" in e for e in check(site, "web-loja")))
 
     def test_unknown_runtime_and_missing_app_file(self):
         self.assertIn("has no runner", check(repo({"deploy/app.hcl": 'runtime = "lambda"\nname = "func-x"\n'}), "func-x")[0])

@@ -16,6 +16,12 @@ variable "platform_region" {
   description = "Primary region of the platform (PRIMARY_REGION org variable, from the pipeline): where its parameters are read"
 }
 
+variable "app_dir" {
+  type        = string
+  description = "The app repo's root, where the api's source_dir is (from the pipeline)"
+  default     = "."
+}
+
 variable "environment" {
   type        = string
   description = "Account being deployed (from the GitHub Environment)"
@@ -60,4 +66,16 @@ variable "spa" {
 variable "hosts" {
   type        = list(string)
   description = "Public names of the site: a label (vendas → vendas.<platform zone>), or the apex or <label> of a zone the platform allows (site-zones)"
+}
+
+variable "api" {
+  type = object({
+    source_dir = string # folder of the function's code in the repo, e.g. api
+    handler    = string # <file>.<function>, e.g. index.handler
+    runtime    = optional(string, "nodejs22.x")
+    memory     = optional(number, 128)
+    timeout    = optional(number, 10)
+  })
+  description = "The site's API at /api/* (a Lambda function; its secrets in SSM under /<prefix>/<env>/<app>/secrets); null = none"
+  default     = null
 }
