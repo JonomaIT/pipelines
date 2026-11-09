@@ -25,6 +25,20 @@ jobs:
       - name: Lint workflows
         run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
 
+      - name: Self references at the latest version
+        # The workflows call this repo's own actions by tag (deploy-app brings the runners): a
+        # release that keeps an older tag there ships the older runners and contract. The newest
+        # version is the first row of the README's table.
+        run: |
+          latest=$(sed -n 's/^| .\(v[0-9]*\.[0-9]*\.[0-9]*\). |.*/\1/p' README.md | head -1)
+          stale=$(grep -rnoE 'JonomaIT/pipelines/\.github/[^@[:space:]]+@v[0-9.]+' .github | grep -v "@${latest}$" || true)
+          if [ -n "$stale" ]; then
+            echo "::error::Self references must be @${latest} (the README's newest version):"
+            echo "$stale"
+            exit 1
+          fi
+          echo "every self reference is @${latest}"
+
   terraform:
     uses: ./.github/workflows/terraform-ci.yml
 
