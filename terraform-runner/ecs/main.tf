@@ -63,7 +63,7 @@ resource "terraform_data" "env_contract" {
 }
 
 module "app" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//ecs-service?ref=v0.13.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//ecs-service?ref=v0.14.0"
 
   prefix      = var.prefix
   name        = var.name
@@ -97,11 +97,12 @@ locals {
 }
 
 module "dns" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.13.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.14.0"
   count  = local.dns_owner ? 1 : 0
 
-  zone   = local.zone
-  hosts  = local.hosts
-  target = local.ingress
-  owner  = var.name
+  zone        = local.zone
+  zone_owners = local.zone_owners
+  hosts       = local.hosts
+  target      = local.ingress
+  owner       = var.name
 }

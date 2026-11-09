@@ -150,3 +150,42 @@ run "platform_read_in_its_primary_region" {
     error_message = "The platform's parameters are read in its primary region, not in CloudFront's."
   }
 }
+
+run "the_apex_goes_to_the_app_that_owns_it" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.platform
+    values = {
+      names  = ["/jonomait/production/platform/zone", "/jonomait/production/platform/regions", "/jonomait/production/platform/zone-owners"]
+      values = ["joshuel.com.br", "us-east-1", "joshuel.com.br=web-app,cliente.com.br=web-cliente"]
+    }
+  }
+
+  variables {
+    hosts = ["joshuel.com.br"]
+  }
+
+  assert {
+    condition     = local.zone_owners["joshuel.com.br"] == "web-app" && local.zone_owners["cliente.com.br"] == "web-cliente" && one(output.public_hosts) == "joshuel.com.br"
+    error_message = "zone-owners reaches the modules: the owner of the platform zone's apex gets it."
+  }
+}
+
+run "the_apex_of_another_app_is_refused" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.platform
+    values = {
+      names  = ["/jonomait/production/platform/zone", "/jonomait/production/platform/regions", "/jonomait/production/platform/zone-owners"]
+      values = ["joshuel.com.br", "us-east-1", "joshuel.com.br=web-home"]
+    }
+  }
+
+  variables {
+    hosts = ["joshuel.com.br"]
+  }
+
+  expect_failures = [module.site[0].aws_acm_certificate.site]
+}

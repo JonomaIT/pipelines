@@ -18,7 +18,7 @@ locals {
 }
 
 module "site" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//cloudfront-site?ref=v0.13.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//cloudfront-site?ref=v0.14.0"
   count  = local.platform_ready ? 1 : 0
 
   prefix          = var.prefix
@@ -26,6 +26,7 @@ module "site" {
   environment     = var.environment
   zone            = local.zone
   extra_zones     = local.site_zones
+  zone_owners     = local.zone_owners
   hosts           = local.hosts
   spa             = var.spa
   failover_region = local.failover_region
@@ -38,11 +39,12 @@ module "site" {
 }
 
 module "dns" {
-  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.13.0"
+  source = "git::https://github.com/JonomaIT/terraform-modules.git//app-dns?ref=v0.14.0"
   count  = local.platform_ready ? 1 : 0
 
   zone        = local.zone
   extra_zones = local.site_zones
+  zone_owners = local.zone_owners
   hosts       = local.hosts
   target      = module.site[0].domain_name
   owner       = var.name

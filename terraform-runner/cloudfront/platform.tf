@@ -19,6 +19,10 @@ locals {
 
   site_zones = compact(split(",", lookup(local.platform, "site-zones", "")))
 
+  # Zones with an owner (global/platform zone-owners, "zone=app,zone=app"): the platform zone's
+  # apex, or a customer's whole zone, belongs to that app only.
+  zone_owners = { for p in compact(split(",", lookup(local.platform, "zone-owners", ""))) : split("=", p)[0] => split("=", p)[1] }
+
   # Public names: a label is a name under the platform's zone (vendas → vendas.<zone>), so a site
   # never writes the domain; a full name stays as it is (a customer's domain, site-zones).
   hosts = [for h in var.hosts : strcontains(h, ".") ? h : "${h}.${local.zone}"]
