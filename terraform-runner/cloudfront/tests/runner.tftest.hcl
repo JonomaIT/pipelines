@@ -172,20 +172,5 @@ run "the_apex_goes_to_the_app_that_owns_it" {
   }
 }
 
-run "the_apex_of_another_app_is_refused" {
-  command = plan
-
-  override_data {
-    target = data.aws_ssm_parameters_by_path.platform
-    values = {
-      names  = ["/jonomait/production/platform/zone", "/jonomait/production/platform/regions", "/jonomait/production/platform/zone-owners"]
-      values = ["joshuel.com.br", "us-east-1", "joshuel.com.br=web-home"]
-    }
-  }
-
-  variables {
-    hosts = ["joshuel.com.br"]
-  }
-
-  expect_failures = [module.site[0].aws_acm_certificate.site]
-}
+# The refusal of another app's apex is tested in the modules (app-dns, cloudfront-site): a test
+# here cannot expect a failure inside a module.
