@@ -12,6 +12,10 @@ locals {
   platform_regions = compact(split(",", lookup(local.platform, "regions", "")))
   zone             = lookup(local.platform, "zone", "")
 
+  # Zones with an owner (global/platform zone-owners, "zone=app,zone=app"): the platform zone's
+  # apex, or a customer's whole zone, belongs to that app only.
+  zone_owners = { for p in compact(split(",", lookup(local.platform, "zone-owners", ""))) : split("=", p)[0] => split("=", p)[1] }
+
   policy    = jsondecode(file("${path.module}/../../policies/limits.json"))
   exception = try(local.policy.exceptions[var.name], null)
   limits    = merge(local.policy.defaults[var.environment], try(local.exception[var.environment], {}))

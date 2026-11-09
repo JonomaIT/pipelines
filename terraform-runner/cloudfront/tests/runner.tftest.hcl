@@ -1,6 +1,9 @@
 # The runner against typical site values, with mocked providers (no credentials).
 
 mock_provider "aws" {
+  mock_data "aws_region" {
+    defaults = { region = "us-east-1" }
+  }
   mock_data "aws_caller_identity" {
     defaults = { account_id = "111111111111" }
   }
@@ -17,7 +20,7 @@ mock_provider "aws" {
 
 mock_provider "cloudflare" {
   mock_data "cloudflare_zone" {
-    defaults = { id = "zone123" }
+    defaults = { id = "zone123", account = { id = "account123" } }
   }
 }
 
@@ -148,5 +151,67 @@ run "platform_read_in_its_primary_region" {
   assert {
     condition     = data.aws_ssm_parameters_by_path.platform.region == "sa-east-1"
     error_message = "The platform's parameters are read in its primary region, not in CloudFront's."
+  }
+}
+
+run "the_apex_goes_to_the_app_that_owns_it" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.platform
+    values = {
+      names  = ["/jonomait/production/platform/zone", "/jonomait/production/platform/regions", "/jonomait/production/platform/zone-owners"]
+      values = ["joshuel.com.br", "us-east-1", "joshuel.com.br=web-app,cliente.com.br=web-cliente"]
+    }
+  }
+
+  variables {
+    hosts = ["joshuel.com.br"]
+  }
+
+  assert {
+    condition     = local.zone_owners["joshuel.com.br"] == "web-app" && local.zone_owners["cliente.com.br"] == "web-cliente" && one(output.public_hosts) == "joshuel.com.br"
+    error_message = "zone-owners reaches the modules: the owner of the platform zone's apex gets it."
+  }
+}
+
+# The refusal of another app's apex is tested in the modules (app-dns, cloudfront-site): a test
+# here cannot expect a failure inside a module.
+
+run "a_site_with_an_api" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.platform
+    values = {
+      names  = ["/jonomait/production/platform/zone", "/jonomait/production/platform/regions"]
+      values = ["joshuel.com.br", "us-east-1"]
+    }
+  }
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.data_env[0]
+    values = { names = ["/jonomait/production/web-app/env/TABLE_PROGRESS"], values = ["jonomait-prd-web-app-progress"] }
+  }
+
+  override_data {
+    target = data.aws_ssm_parameters_by_path.data_iam[0]
+    values = { names = ["/jonomait/production/web-app/iam/data-access"], values = ["arn:aws:iam::111111111111:policy/jonomait-prd-web-app-data-access"] }
+  }
+
+  variables {
+    hosts   = ["app"]
+    spa     = true
+    app_dir = "tests/fixture-app"
+    api     = { source_dir = "api", handler = "index.handler" }
+  }
+
+  assert {
+    condition = (
+      length(module.api) == 1 && local.secrets_path == "/jonomait/production/web-app/secrets" &&
+      local.data_env["TABLE_PROGRESS"] == "jonomait-prd-web-app-progress" &&
+      length(local.data_policies) == 1
+    )
+    error_message = "The API gets the app's data (TABLE_*, data-access policy) and the path of its secrets."
   }
 }

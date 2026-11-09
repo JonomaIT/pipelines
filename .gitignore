@@ -49,3 +49,6 @@ terraform.rc
 
 # Python bytecode (contract/)
 __pycache__/
+
+# Lambda packages zipped at plan time (lambda-function)
+.build/

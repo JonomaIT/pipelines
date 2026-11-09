@@ -1,16 +1,66 @@
 {
   "runtimes": {
     "ecs": {
-      "deploy/app.hcl": ["runtime", "name", "port", "health_check_path", "env", "secrets", "slo", "min_coverage"],
-      "deploy/env/*.tfvars": ["regions", "hosts", "cpu", "memory", "min_capacity", "max_capacity", "cpu_target", "off_hours"],
-      "deploy/data.hcl": ["tables", "topics", "queues", "buckets", "uses", "shares"]
+      "deploy/app.hcl": [
+        "runtime",
+        "name",
+        "port",
+        "health_check_path",
+        "env",
+        "secrets",
+        "slo",
+        "min_coverage"
+      ],
+      "deploy/env/*.tfvars": [
+        "regions",
+        "hosts",
+        "cpu",
+        "memory",
+        "min_capacity",
+        "max_capacity",
+        "cpu_target",
+        "off_hours"
+      ],
+      "deploy/data.hcl": [
+        "tables",
+        "topics",
+        "queues",
+        "buckets",
+        "uses",
+        "shares"
+      ]
     },
     "cloudfront": {
-      "deploy/app.hcl": ["runtime", "name", "source_dir", "spa"],
-      "deploy/env/*.tfvars": ["hosts"]
+      "deploy/app.hcl": [
+        "runtime",
+        "name",
+        "source_dir",
+        "spa",
+        "api"
+      ],
+      "deploy/env/*.tfvars": [
+        "hosts"
+      ],
+      "deploy/data.hcl": [
+        "tables",
+        "topics",
+        "queues",
+        "buckets",
+        "uses",
+        "shares"
+      ]
     }
   },
-  "platform": ["prefix", "environment", "region", "platform_region", "image", "zone", "allow_destroy"],
+  "platform": [
+    "prefix",
+    "environment",
+    "region",
+    "platform_region",
+    "image",
+    "zone",
+    "allow_destroy",
+    "app_dir"
+  ],
   "renamed": {
     "cobertura_minima": "min_coverage",
     "fora_do_horario": "off_hours"

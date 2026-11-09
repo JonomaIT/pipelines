@@ -4,7 +4,8 @@
 # of exactly that plan.
 #
 #   ecs          data (deploy/data.hcl) → the app in each region, primary first → smoke tests
-#   cloudfront   the site's infrastructure → the built files → CloudFront invalidation
+#   cloudfront   data (deploy/data.hcl, if any) → the site's infrastructure (and its API) → the
+#                built files → CloudFront invalidation
 #   destroy      the reverse: regions last to first, data last
 set -euo pipefail
 
@@ -91,7 +92,7 @@ ecs() {
 site() {
   step cloudfront "$ENVIRONMENT/global/apps/$name" "site · $ENVIRONMENT" \
     -var-file="$APP_DIR/deploy/app.hcl" -var-file="$APP_DIR/deploy/env/$ENVIRONMENT.tfvars" \
-    -var "environment=$ENVIRONMENT" -var "platform_region=$PRIMARY_REGION"
+    -var "environment=$ENVIRONMENT" -var "platform_region=$PRIMARY_REGION" -var "app_dir=$APP_DIR"
 }
 
 # The site's buckets: the primary and, with two platform regions, its copy (origin failover).
@@ -186,7 +187,9 @@ case "$runtime" in
     if [ "$DESTROY" = true ]; then
       empty_site_bucket
       site
+      data
     else
+      data
       site
       site_files
     fi
