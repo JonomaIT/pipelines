@@ -13,6 +13,6 @@ permissions:
 jobs:
   dependabot:
     if: github.actor == 'dependabot[bot]'
-    uses: JonomaIT/pipelines/.github/workflows/dependabot-auto-merge.yml@v2.12.0 # x-release-please-version
+    uses: JonomaIT/pipelines/.github/workflows/dependabot-auto-merge.yml@v2.13.0 # x-release-please-version
     secrets:
       RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
