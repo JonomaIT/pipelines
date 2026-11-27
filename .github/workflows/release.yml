@@ -13,7 +13,7 @@ name: Release
 # what GITHUB_TOKEN does, so the release PR would never get its required checks, and the merge
 # would never trigger this workflow again to create the tags.
 # Setup: org variable RELEASE_APP_CLIENT_ID and org secret RELEASE_APP_PRIVATE_KEY (app with
-# Contents and Pull requests read/write, installed on this repo), and "Allow auto-merge" on.
+# Contents, Pull requests and Workflows read/write, installed on this repo), and "Allow auto-merge" on.
 on:
   push:
     branches:
@@ -39,6 +39,9 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
+          # The release PR moves the self references inside .github/workflows: GitHub only lets a
+          # token change workflow files with the workflows permission.
+          permission-workflows: write
 
       - name: Release PR and releases
         id: release

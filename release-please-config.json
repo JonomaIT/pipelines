@@ -8,9 +8,18 @@
     ".": {
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
-        ".github/workflows/build-push.yml",
-        ".github/workflows/build-static.yml",
-        ".github/workflows/deploy-app.yml"
+        {
+          "type": "generic",
+          "path": ".github/workflows/build-push.yml"
+        },
+        {
+          "type": "generic",
+          "path": ".github/workflows/build-static.yml"
+        },
+        {
+          "type": "generic",
+          "path": ".github/workflows/deploy-app.yml"
+        }
       ]
     }
   }
