@@ -16,7 +16,8 @@ name: deploy-app
 #   - org variables PROJECT_PREFIX, STATE_REGION, PRIMARY_REGION (the platform's identity);
 #   - state bucket <prefix>-<account>-tfstate; keys <account>/cross-region/data/<app>,
 #     <account>/<region>/apps/<app>, <account>/global/apps/<app>;
-#   - AWS_ACCOUNT_IDS org variable; role github-actions-<repo> in the account (organization
+#   - AWS_ACCOUNT_ID_<ACCOUNT> org variables (AWS_ACCOUNT_IDS JSON still read as a fallback);
+#     role github-actions-<repo> in the account (organization
 #     bootstrap), which only trusts jobs inside the account's GitHub Environment.
 #
 # Not yet (ADR-014, step 3): a role that trusts only this workflow (job_workflow_ref), the plan
@@ -91,7 +92,7 @@ jobs:
       - name: AWS credentials (write)
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: arn:aws:iam::${{ fromJSON(vars.AWS_ACCOUNT_IDS)[inputs.environment] }}:role/github-actions-${{ github.event.repository.name }}
+          role-to-assume: arn:aws:iam::${{ vars[format('AWS_ACCOUNT_ID_{0}', inputs.environment)] || fromJSON(vars.AWS_ACCOUNT_IDS || '{}')[inputs.environment] }}:role/github-actions-${{ github.event.repository.name }}
           aws-region: ${{ vars.PRIMARY_REGION }}
 
       - name: Site (static apps)
@@ -107,5 +108,5 @@ jobs:
           environment: ${{ inputs.environment }}
           destroy: ${{ inputs.destroy }}
           image-tag: ${{ github.sha }}
-          registry-account: ${{ fromJSON(vars.AWS_ACCOUNT_IDS)['shared-services'] }}
+          registry-account: ${{ (vars.AWS_ACCOUNT_ID_SHARED_SERVICES || fromJSON(vars.AWS_ACCOUNT_IDS || '{}')['shared-services']) }}
           site-dir: ${{ runner.temp }}/site
