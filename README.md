@@ -7,6 +7,7 @@ pipelines/
 ├── .github/workflows/
 │   ├── terraform-ci.yml       reusable: fmt, validate, terraform test of every root
 │   ├── terraform-deploy.yml   reusable: plan (PR) / apply (main, manual) per component × account × region
+│   ├── dependabot-auto-merge.yml  reusable: Dependabot patch/minor merge themselves, major waits
 │   ├── build-push.yml         reusable: app image build + Trivy scan (PR); also push to ECR (main)
 │   ├── build-static.yml       reusable: static site lint, typecheck, test, build + Trivy (PR); also keeps the site (main)
 │   ├── deploy-app.yml         reusable: an app's data, app per region (or site) and smoke tests in one account
@@ -34,6 +35,7 @@ jobs:
 | `terraform-modules` | `terraform-ci` |
 | `organization` | `terraform-ci` + `terraform-deploy` (`global/github`, with `github-app`) |
 | `infrastructure` | `terraform-ci` + `terraform-deploy` |
+| every repo with Dependabot | `dependabot-auto-merge` |
 | apps with an image (`svc-*`) | `build-push` + `deploy-app` |
 | static sites (`web-*`) | `build-static` + `deploy-app` |
 
@@ -47,6 +49,10 @@ Two jobs, no cloud access:
 | `security scan` | **gitleaks** (secrets in the code and the history), **TFLint** (Terraform mistakes), **Trivy** (insecure configuration, HIGH and CRITICAL) |
 
 An accepted finding is an exception **annotated in the code, with the reason**, right above the resource: `#trivy:ignore:<id>` or `# tflint-ignore: <rule>`. Scanner images are pinned by version.
+
+## dependabot-auto-merge
+
+Dependabot PRs whose updates are all **patch or minor** get auto-merge (squash) and land when the repo's required checks pass; a **major** (or an update type it cannot read) gets the label `dependabot:manual` and waits. The types come from the `updated-dependencies` metadata in Dependabot's commit message. It uses the `jonomait-release` app (a merge through `GITHUB_TOKEN` would start no deploy or release on `main`), whose key must also be an org **Dependabot** secret `RELEASE_APP_PRIVATE_KEY`, since Dependabot-triggered runs see only Dependabot secrets.
 
 ## terraform-deploy
 
