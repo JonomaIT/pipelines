@@ -31,7 +31,8 @@ jobs:
 
 | Repo | Calls |
 |---|---|
-| `terraform-modules`, `organization` | `terraform-ci` |
+| `terraform-modules` | `terraform-ci` |
+| `organization` | `terraform-ci` + `terraform-deploy` (`global/github`, with `github-app`) |
 | `infrastructure` | `terraform-ci` + `terraform-deploy` |
 | apps with an image (`svc-*`) | `build-push` + `deploy-app` |
 | static sites (`web-*`) | `build-static` + `deploy-app` |
@@ -74,6 +75,8 @@ Roles: `github-actions-<repo>-plan` (read-only; pull requests and `main`) for pl
 
 Needs the platform's identity in **org variables** and a GitHub Environment per account. Components with Cloudflare receive `CLOUDFLARE_API_TOKEN`.
 
+*Components that manage GitHub* (`github-app: true`, caller with `secrets: inherit`): every plan runs with an installation token of the read-only app (repo variable `SETTINGS_PLAN_APP_CLIENT_ID`, secret `SETTINGS_PLAN_APP_PRIVATE_KEY`; Administration: read), the apply with one of the write app (`SETTINGS_APP_CLIENT_ID`, `SETTINGS_APP_PRIVATE_KEY`, **only in the account's Environment**; Administration: read and write), as `GITHUB_TOKEN`. A pull request never reaches the write app.
+
 | Org variable | Example | Used for |
 |---|---|---|
 | `PROJECT_PREFIX` | `jonomait` | `TF_VAR_prefix` of every component and runner: names `<prefix>-<env>-…`, parameters `/<prefix>/<env>/…`, tags `<prefix>:*`; state bucket `<prefix>-<account>-tfstate` |
@@ -88,6 +91,7 @@ A new platform (another name, another domain) is these variables, the bootstrap 
 
 | Tag | Change |
 |---|---|
+| `v2.10.0` | `terraform-deploy`: `github-app` input, for components that manage GitHub itself (`organization` `global/github`, the org's settings standard). Plans and drift get a token of a **read-only** GitHub App (`SETTINGS_PLAN_APP_*`), the apply one of a **write** app whose key lives only in the account's Environment (`SETTINGS_APP_*`), the same split as the plan and write roles. The caller passes `secrets: inherit`. Nothing changes for callers without it. |
 | `v2.9.2` | Runners on modules `v0.16.0`: every site issues its own certificate, so a site on a label of the platform zone (`english.joshuel.com.br`) no longer needs the lab's wildcard (`alb-shared`). Sites deployed before keep their certificates. |
 | `v2.9.1` | **Fix:** `v2.8.0` and `v2.9.0` still called the repo's own actions at `v2.7.0` (`deploy-app` brings the runners, `contract-check` the contract), so they deployed with the `v2.7.0` runners and contract: no zone owners, no site APIs. Every self reference is now the release's own tag, and CI fails when one is older than the README's newest version. Use this one, not `v2.8.0`/`v2.9.0`. |
 | `v2.9.0` | **APIs for sites.** A site's `deploy/app.hcl` may declare `api = { source_dir, handler, runtime?, memory?, timeout? }`: the CloudFront runner builds a Lambda function from that folder (modules `v0.15.0`, `lambda-function`) at `/api/*` of the site's own names, with the app's data (`deploy/data.hcl`, now allowed for sites: `TABLE_*` and the data-access policy, as the ECS runner does) and `SECRETS_PATH`, the SSM path of the app's secrets (`/<prefix>/<env>/<app>/secrets`, set outside Terraform, read at run time). Who may call what, the function decides. `deploy-app`: a site's data before the site, destroyed after it. Contract: `api` and `deploy/data.hcl` for sites, `app_dir` is the platform's. |
