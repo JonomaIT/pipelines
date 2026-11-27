@@ -27,13 +27,13 @@ jobs:
 
       - name: Self references at the latest version
         # The workflows call this repo's own actions by tag (deploy-app brings the runners): a
-        # release that keeps an older tag there ships the older runners and contract. The newest
-        # version is the first row of the README's table.
+        # release that keeps an older tag there ships the older runners and contract. The current
+        # version is release-please's manifest; its release PR moves both together.
         run: |
-          latest=$(sed -n 's/^| .\(v[0-9]*\.[0-9]*\.[0-9]*\). |.*/\1/p' README.md | head -1)
+          latest="v$(jq -r '."."' .release-please-manifest.json)"
           stale=$(grep -rnoE 'JonomaIT/pipelines/\.github/[^@[:space:]]+@v[0-9.]+' .github | grep -v "@${latest}$" || true)
           if [ -n "$stale" ]; then
-            echo "::error::Self references must be @${latest} (the README's newest version):"
+            echo "::error::Self references must be @${latest} (.release-please-manifest.json):"
             echo "$stale"
             exit 1
           fi
