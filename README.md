@@ -82,7 +82,7 @@ Needs the platform's identity in **org variables** and a GitHub Environment per 
 | `PROJECT_PREFIX` | `jonomait` | `TF_VAR_prefix` of every component and runner: names `<prefix>-<env>-…`, parameters `/<prefix>/<env>/…`, tags `<prefix>:*`; state bucket `<prefix>-<account>-tfstate` |
 | `STATE_REGION` | `us-east-1` | region of the state buckets |
 | `PRIMARY_REGION` | `us-east-1` | default region of the AWS calls, applied first; an app that lists no regions runs here |
-| `AWS_ACCOUNT_IDS` | `{"production": "…"}` | account of each environment; accounts not listed are skipped |
+| `AWS_ACCOUNT_ID_<ACCOUNT>` | `AWS_ACCOUNT_ID_PRODUCTION`, `AWS_ACCOUNT_ID_SHARED_SERVICES` | one per account (`-` becomes `_`); an account without one is skipped. The older `AWS_ACCOUNT_IDS` JSON is still read, and the per-account variable wins |
 | `TERRAFORM_VERSION` | `1.14.1` | Terraform of every job |
 
 A new platform (another name, another domain) is these variables, the bootstrap of `organization` and the zone in `infrastructure` `global/platform`: no code changes. The only literal left is the GitHub organization in `uses:` and module `source` (GitHub and Terraform do not take variables there).

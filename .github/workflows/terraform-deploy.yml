@@ -20,7 +20,9 @@ name: terraform-deploy
 #
 # Conventions it relies on:
 #   - backends/<account>.tfbackend in the caller repo (state bucket of the account);
-#   - AWS_ACCOUNT_IDS org variable, JSON {"<account>": "<id>"}: accounts not listed (not
+#   - AWS_ACCOUNT_ID_<ACCOUNT> org variables, one per account (shared-services →
+#     AWS_ACCOUNT_ID_SHARED_SERVICES; the older AWS_ACCOUNT_IDS JSON is still read, the
+#     per-account variable wins): accounts without an ID (not
 #     bootstrapped yet) are skipped;
 #   - roles from organization/bootstrap: github-actions-<repo>-plan (read-only; pull requests and
 #     main) and github-actions-<repo> (write; only inside the account's GitHub Environment).
@@ -134,6 +136,7 @@ jobs:
           DESTROY: ${{ inputs.destroy }}
           PERSISTENT: ${{ inputs.persistent }}
           ACCOUNTS: ${{ vars.AWS_ACCOUNT_IDS }}
+          VARS: ${{ toJSON(vars) }}
         run: |
           import glob
           import json
@@ -143,6 +146,10 @@ jobs:
           # Inputs (environment): EVENT, BASE, HEAD, ORDER, TARGET, DESTROY, PERSISTENT, PRIMARY_REGION, ACCOUNTS.
           order = os.environ["ORDER"].split()
           accounts = json.loads(os.environ.get("ACCOUNTS") or "{}")
+          # One variable per account (AWS_ACCOUNT_ID_SHARED_SERVICES → shared-services) wins over the JSON.
+          for name, value in json.loads(os.environ.get("VARS") or "{}").items():
+              if name.upper().startswith("AWS_ACCOUNT_ID_") and value:
+                  accounts[name[len("AWS_ACCOUNT_ID_"):].lower().replace("_", "-")] = value
           event = os.environ["EVENT"]
           target = os.environ.get("TARGET", "").strip().strip("/")
           destroy = os.environ.get("DESTROY") == "true"
@@ -226,7 +233,7 @@ jobs:
                   print(f"::warning::{path}: component not in the deploy order, skipped")
                   continue
               if not t["account_id"]:
-                  print(f"::notice::{path}: account {t['account']} not in AWS_ACCOUNT_IDS (not bootstrapped), skipped")
+                  print(f"::notice::{path}: account {t['account']} has no AWS_ACCOUNT_ID_{t['account'].upper().replace('-', '_')} variable (not bootstrapped), skipped")
                   continue
               targets.append(t)
 
