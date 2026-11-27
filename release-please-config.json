@@ -1,0 +1,30 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "bootstrap-sha": "177bbd1ec7cbd227c4b886cdc184a1439673cfad",
+  "packages": {
+    ".": {
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": ".github/workflows/build-push.yml"
+        },
+        {
+          "type": "generic",
+          "path": ".github/workflows/build-static.yml"
+        },
+        {
+          "type": "generic",
+          "path": ".github/workflows/deploy-app.yml"
+        },
+        {
+          "type": "generic",
+          "path": ".github/workflows/dependabot.yml"
+        }
+      ]
+    }
+  }
+}

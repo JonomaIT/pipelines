@@ -20,7 +20,9 @@ name: terraform-deploy
 #
 # Conventions it relies on:
 #   - backends/<account>.tfbackend in the caller repo (state bucket of the account);
-#   - AWS_ACCOUNT_IDS org variable, JSON {"<account>": "<id>"}: accounts not listed (not
+#   - AWS_ACCOUNT_ID_<ACCOUNT> org variables, one per account (shared-services →
+#     AWS_ACCOUNT_ID_SHARED_SERVICES; the older AWS_ACCOUNT_IDS JSON is still read, the
+#     per-account variable wins): accounts without an ID (not
 #     bootstrapped yet) are skipped;
 #   - roles from organization/bootstrap: github-actions-<repo>-plan (read-only; pull requests and
 #     main) and github-actions-<repo> (write; only inside the account's GitHub Environment).
@@ -32,6 +34,12 @@ name: terraform-deploy
 #         order: network ecs-cluster alb-shared
 #       secrets:
 #         CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+#
+# Components that manage GitHub itself (organization global/github) set github-app: true and pass
+# `secrets: inherit`. Two GitHub Apps, split like the AWS roles:
+#   plan   repo variable SETTINGS_PLAN_APP_CLIENT_ID + secret SETTINGS_PLAN_APP_PRIVATE_KEY (read-only)
+#   apply  SETTINGS_APP_CLIENT_ID + SETTINGS_APP_PRIVATE_KEY, only in the account's Environment (write)
+# Each job gets an installation token of its app as GITHUB_TOKEN (the github provider reads it).
 on:
   workflow_call:
     inputs:
@@ -69,10 +77,21 @@ on:
         required: false
         default: ""
         description: Terraform version (default - the TERRAFORM_VERSION org variable)
+      github-app:
+        type: boolean
+        required: false
+        default: false
+        description: Components use the github provider - plans get a token of the read-only app, the apply one of the write app
     secrets:
       CLOUDFLARE_API_TOKEN:
         required: false
         description: Only for components that use the Cloudflare provider
+      SETTINGS_PLAN_APP_PRIVATE_KEY:
+        required: false
+        description: Only with github-app - private key of the read-only GitHub App (plans, drift)
+      SETTINGS_APP_PRIVATE_KEY:
+        required: false
+        description: Only with github-app - private key of the write GitHub App, kept in the account's Environment
 
 permissions:
   contents: read
@@ -117,6 +136,7 @@ jobs:
           DESTROY: ${{ inputs.destroy }}
           PERSISTENT: ${{ inputs.persistent }}
           ACCOUNTS: ${{ vars.AWS_ACCOUNT_IDS }}
+          VARS: ${{ toJSON(vars) }}
         run: |
           import glob
           import json
@@ -126,6 +146,10 @@ jobs:
           # Inputs (environment): EVENT, BASE, HEAD, ORDER, TARGET, DESTROY, PERSISTENT, PRIMARY_REGION, ACCOUNTS.
           order = os.environ["ORDER"].split()
           accounts = json.loads(os.environ.get("ACCOUNTS") or "{}")
+          # One variable per account (AWS_ACCOUNT_ID_SHARED_SERVICES → shared-services) wins over the JSON.
+          for name, value in json.loads(os.environ.get("VARS") or "{}").items():
+              if name.upper().startswith("AWS_ACCOUNT_ID_") and value:
+                  accounts[name[len("AWS_ACCOUNT_ID_"):].lower().replace("_", "-")] = value
           event = os.environ["EVENT"]
           target = os.environ.get("TARGET", "").strip().strip("/")
           destroy = os.environ.get("DESTROY") == "true"
@@ -209,7 +233,7 @@ jobs:
                   print(f"::warning::{path}: component not in the deploy order, skipped")
                   continue
               if not t["account_id"]:
-                  print(f"::notice::{path}: account {t['account']} not in AWS_ACCOUNT_IDS (not bootstrapped), skipped")
+                  print(f"::notice::{path}: account {t['account']} has no AWS_ACCOUNT_ID_{t['account'].upper().replace('-', '_')} variable (not bootstrapped), skipped")
                   continue
               targets.append(t)
 
@@ -269,11 +293,21 @@ jobs:
           role-to-assume: arn:aws:iam::${{ matrix.account_id }}:role/github-actions-${{ github.event.repository.name }}-plan
           aws-region: ${{ env.PRIMARY_REGION }}
 
+      - name: GitHub token (read-only app)
+        id: gh-app
+        if: inputs.github-app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.SETTINGS_PLAN_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SETTINGS_PLAN_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Terraform init
         run: terraform init -backend-config="bucket=$TF_VAR_prefix-${{ matrix.account }}-tfstate" -backend-config="region=$STATE_REGION" -backend-config="key=${{ matrix.key }}"
 
       - name: Terraform plan
         env:
+          GITHUB_TOKEN: ${{ steps.gh-app.outputs.token }}
           EVENT: ${{ github.event_name }}
           DRIFT: ${{ inputs.drift }}
           DESTROY_FLAG: ${{ inputs.destroy && '-destroy' || '' }}
@@ -425,6 +459,15 @@ jobs:
           role-to-assume: arn:aws:iam::${{ matrix.account_id }}:role/github-actions-${{ github.event.repository.name }}
           aws-region: ${{ env.PRIMARY_REGION }}
 
+      - name: GitHub token (write app)
+        id: gh-app
+        if: inputs.github-app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.SETTINGS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SETTINGS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Reviewed plans
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -444,6 +487,7 @@ jobs:
 
       - name: Apply in order
         env:
+          GITHUB_TOKEN: ${{ steps.gh-app.outputs.token }}
           TARGETS: ${{ needs.targets.outputs.targets }}
           ACCOUNT: ${{ matrix.account }}
           DESTROY_FLAG: ${{ inputs.destroy && '-destroy' || '' }}

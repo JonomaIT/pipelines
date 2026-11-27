@@ -7,6 +7,7 @@ pipelines/
 ├── .github/workflows/
 │   ├── terraform-ci.yml       reusable: fmt, validate, terraform test of every root
 │   ├── terraform-deploy.yml   reusable: plan (PR) / apply (main, manual) per component × account × region
+│   ├── dependabot-auto-merge.yml  reusable: Dependabot patch/minor merge themselves, major waits
 │   ├── build-push.yml         reusable: app image build + Trivy scan (PR); also push to ECR (main)
 │   ├── build-static.yml       reusable: static site lint, typecheck, test, build + Trivy (PR); also keeps the site (main)
 │   ├── deploy-app.yml         reusable: an app's data, app per region (or site) and smoke tests in one account
@@ -31,8 +32,10 @@ jobs:
 
 | Repo | Calls |
 |---|---|
-| `terraform-modules`, `organization` | `terraform-ci` |
+| `terraform-modules` | `terraform-ci` |
+| `organization` | `terraform-ci` + `terraform-deploy` (`global/github`, with `github-app`) |
 | `infrastructure` | `terraform-ci` + `terraform-deploy` |
+| every repo with Dependabot | `dependabot-auto-merge` |
 | apps with an image (`svc-*`) | `build-push` + `deploy-app` |
 | static sites (`web-*`) | `build-static` + `deploy-app` |
 
@@ -46,6 +49,17 @@ Two jobs, no cloud access:
 | `security scan` | **gitleaks** (secrets in the code and the history), **TFLint** (Terraform mistakes), **Trivy** (insecure configuration, HIGH and CRITICAL) |
 
 An accepted finding is an exception **annotated in the code, with the reason**, right above the resource: `#trivy:ignore:<id>` or `# tflint-ignore: <rule>`. Scanner images are pinned by version.
+
+## dependabot-auto-merge
+
+Dependabot PRs whose updates are all **patch or minor** merge themselves (squash) once the repo's required checks pass; a **major** (or an update type it cannot read) gets the label `dependabot:manual` and waits. The types come from the `updated-dependencies` metadata in Dependabot's commit message. A merge through `GITHUB_TOKEN` would start no deploy or release on `main`, so a GitHub App merges:
+
+| main of the repo | App | How |
+|---|---|---|
+| needs no review (platform, sites) | `jonomait-release` | auto-merge on; GitHub merges when the checks pass |
+| needs a review (apps, code owners) | `jonomait-dependabot` | waits for the required checks, then merges without the review: the app is a bypass actor of the `main` ruleset (`organization`, `global/github`, `dependabot_app_id`) |
+
+Dependabot-triggered runs see only org **Dependabot** secrets: `RELEASE_APP_PRIVATE_KEY` there too, and `DEPENDABOT_APP_PRIVATE_KEY` **only** there, so no other workflow can use the bypass. `DEPENDABOT_APP_CLIENT_ID` is an org variable. A repo that needs a review and has no Dependabot app gets auto-merge on and merges after the approval.
 
 ## terraform-deploy
 
@@ -74,20 +88,25 @@ Roles: `github-actions-<repo>-plan` (read-only; pull requests and `main`) for pl
 
 Needs the platform's identity in **org variables** and a GitHub Environment per account. Components with Cloudflare receive `CLOUDFLARE_API_TOKEN`.
 
+*Components that manage GitHub* (`github-app: true`, caller with `secrets: inherit`): every plan runs with an installation token of the read-only app (repo variable `SETTINGS_PLAN_APP_CLIENT_ID`, secret `SETTINGS_PLAN_APP_PRIVATE_KEY`; Administration: read), the apply with one of the write app (`SETTINGS_APP_CLIENT_ID`, `SETTINGS_APP_PRIVATE_KEY`, **only in the account's Environment**; Administration: read and write), as `GITHUB_TOKEN`. A pull request never reaches the write app.
+
 | Org variable | Example | Used for |
 |---|---|---|
 | `PROJECT_PREFIX` | `jonomait` | `TF_VAR_prefix` of every component and runner: names `<prefix>-<env>-…`, parameters `/<prefix>/<env>/…`, tags `<prefix>:*`; state bucket `<prefix>-<account>-tfstate` |
 | `STATE_REGION` | `us-east-1` | region of the state buckets |
 | `PRIMARY_REGION` | `us-east-1` | default region of the AWS calls, applied first; an app that lists no regions runs here |
-| `AWS_ACCOUNT_IDS` | `{"production": "…"}` | account of each environment; accounts not listed are skipped |
+| `AWS_ACCOUNT_ID_<ACCOUNT>` | `AWS_ACCOUNT_ID_PRODUCTION`, `AWS_ACCOUNT_ID_SHARED_SERVICES` | one per account (`-` becomes `_`); an account without one is skipped. The older `AWS_ACCOUNT_IDS` JSON is still read, and the per-account variable wins |
 | `TERRAFORM_VERSION` | `1.14.1` | Terraform of every job |
 
 A new platform (another name, another domain) is these variables, the bootstrap of `organization` and the zone in `infrastructure` `global/platform`: no code changes. The only literal left is the GitHub organization in `uses:` and module `source` (GitHub and Terraform do not take variables there).
 
 ## Versions
 
+Released by **release-please** (`.github/workflows/release.yml`): every merge to `main` with a `feat:` or `fix:` commit updates one release PR (next version, `CHANGELOG.md`, the self references); patch and minor releases merge themselves when CI passes and create the tag `vX.Y.Z`; a breaking change (`feat!:`) waits with the label `release:manual`. From `v2.11.0` on, the notes are in [CHANGELOG.md](CHANGELOG.md); the table below is the history before it.
+
 | Tag | Change |
 |---|---|
+| `v2.10.0` | `terraform-deploy`: `github-app` input, for components that manage GitHub itself (`organization` `global/github`, the org's settings standard). Plans and drift get a token of a **read-only** GitHub App (`SETTINGS_PLAN_APP_*`), the apply one of a **write** app whose key lives only in the account's Environment (`SETTINGS_APP_*`), the same split as the plan and write roles. The caller passes `secrets: inherit`. Nothing changes for callers without it. |
 | `v2.9.2` | Runners on modules `v0.16.0`: every site issues its own certificate, so a site on a label of the platform zone (`english.joshuel.com.br`) no longer needs the lab's wildcard (`alb-shared`). Sites deployed before keep their certificates. |
 | `v2.9.1` | **Fix:** `v2.8.0` and `v2.9.0` still called the repo's own actions at `v2.7.0` (`deploy-app` brings the runners, `contract-check` the contract), so they deployed with the `v2.7.0` runners and contract: no zone owners, no site APIs. Every self reference is now the release's own tag, and CI fails when one is older than the README's newest version. Use this one, not `v2.8.0`/`v2.9.0`. |
 | `v2.9.0` | **APIs for sites.** A site's `deploy/app.hcl` may declare `api = { source_dir, handler, runtime?, memory?, timeout? }`: the CloudFront runner builds a Lambda function from that folder (modules `v0.15.0`, `lambda-function`) at `/api/*` of the site's own names, with the app's data (`deploy/data.hcl`, now allowed for sites: `TABLE_*` and the data-access policy, as the ECS runner does) and `SECRETS_PATH`, the SSM path of the app's secrets (`/<prefix>/<env>/<app>/secrets`, set outside Terraform, read at run time). Who may call what, the function decides. `deploy-app`: a site's data before the site, destroyed after it. Contract: `api` and `deploy/data.hcl` for sites, `app_dir` is the platform's. |
