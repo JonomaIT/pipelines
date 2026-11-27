@@ -89,6 +89,8 @@ A new platform (another name, another domain) is these variables, the bootstrap 
 
 ## Versions
 
+Released by **release-please** (`.github/workflows/release.yml`): every merge to `main` with a `feat:` or `fix:` commit updates one release PR (next version, `CHANGELOG.md`, the self references); patch and minor releases merge themselves when CI passes and create the tag `vX.Y.Z`; a breaking change (`feat!:`) waits with the label `release:manual`. From `v2.11.0` on, the notes are in [CHANGELOG.md](CHANGELOG.md); the table below is the history before it.
+
 | Tag | Change |
 |---|---|
 | `v2.10.0` | `terraform-deploy`: `github-app` input, for components that manage GitHub itself (`organization` `global/github`, the org's settings standard). Plans and drift get a token of a **read-only** GitHub App (`SETTINGS_PLAN_APP_*`), the apply one of a **write** app whose key lives only in the account's Environment (`SETTINGS_APP_*`), the same split as the plan and write roles. The caller passes `secrets: inherit`. Nothing changes for callers without it. |

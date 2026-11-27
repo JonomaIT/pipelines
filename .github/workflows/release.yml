@@ -1,0 +1,68 @@
+name: Release
+
+# One version for the repo (vX.Y.Z). On every push to main, release-please reads the Conventional
+# Commits since the last tag and keeps one release PR open with the next version, CHANGELOG.md and
+# the self references (uses: JonomaIT/pipelines/...@vX.Y.Z, lines marked x-release-please-version)
+# moved to it. Merging that PR creates the tag and the GitHub release.
+#
+# Patch and minor releases merge themselves: the release PR gets auto-merge, so it lands as soon as
+# the required checks pass. A release with a breaking change (### ⚠ BREAKING CHANGES in its
+# CHANGELOG) waits for a person, with the label release:manual.
+#
+# Everything runs with a GitHub App token, not GITHUB_TOKEN: GitHub does not start workflows for
+# what GITHUB_TOKEN does, so the release PR would never get its required checks, and the merge
+# would never trigger this workflow again to create the tags.
+# Setup: org variable RELEASE_APP_CLIENT_ID and org secret RELEASE_APP_PRIVATE_KEY (app with
+# Contents and Pull requests read/write, installed on this repo), and "Allow auto-merge" on.
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: App token
+        id: app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Release PR and releases
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Auto-merge patch and minor releases
+        if: steps.release.outputs.pr
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ fromJSON(steps.release.outputs.pr).number }}
+        run: |
+          set -euo pipefail
+          if gh pr view "$PR" --json body --jq .body | grep -q 'BREAKING CHANGES'; then
+            gh label create release:manual --color B60205 \
+              --description "Release with a breaking change: merge by hand" 2>/dev/null || true
+            gh pr edit "$PR" --add-label release:manual
+            gh pr merge "$PR" --disable-auto 2>/dev/null || true
+            echo "::notice::Release PR #$PR has a breaking change: it waits for a person."
+          else
+            gh pr merge "$PR" --auto --squash
+            echo "::notice::Release PR #$PR merges itself when the required checks pass."
+          fi
