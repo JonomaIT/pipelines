@@ -1,16 +1,23 @@
 name: dependabot-auto-merge
 
 # Reusable. Dependabot pull requests merge themselves when they are safe:
-#   patch and minor (every dependency in the PR)   auto-merge (squash): lands when the required
-#                                                  checks of the repo's ruleset pass
+#   patch and minor (every dependency in the PR)   merge (squash) once the required checks of the
+#                                                  repo's ruleset pass
 #   any major, or an update type it cannot read    label dependabot:manual, waits for a person
 # The update types come from the "updated-dependencies" metadata Dependabot writes in its commit
 # message (the same data dependabot/fetch-metadata reads), so no third-party action is needed.
 #
-# It runs with the jonomait-release GitHub App, not GITHUB_TOKEN: a merge done through
-# GITHUB_TOKEN starts no workflow, so the push to main would not deploy (sites) nor release
-# (terraform-modules, pipelines). Workflows triggered by Dependabot only see Dependabot secrets:
-# the app key must also exist as an org **Dependabot** secret RELEASE_APP_PRIVATE_KEY.
+# Which GitHub App merges (never GITHUB_TOKEN: a merge through it starts no workflow, so the push to
+# main would not deploy nor release). Dependabot-triggered runs only see org **Dependabot** secrets.
+#   repo whose main needs no review   jonomait-release: turns on auto-merge, GitHub merges when
+#                                     the checks pass. Secret RELEASE_APP_PRIVATE_KEY.
+#   repo whose main needs a review    jonomait-dependabot, a bypass actor of the main ruleset
+#   (apps: code owners)               (organization, global/github): waits for the required checks,
+#                                     then merges without the review. Its key exists only as a
+#                                     Dependabot secret, so no other workflow can use the bypass.
+#                                     Secret DEPENDABOT_APP_PRIVATE_KEY, variable
+#                                     DEPENDABOT_APP_CLIENT_ID. Without them the PR waits for the
+#                                     review, with auto-merge on.
 #
 #   on:
 #     pull_request:
@@ -23,12 +30,16 @@ name: dependabot-auto-merge
 #       uses: JonomaIT/pipelines/.github/workflows/dependabot-auto-merge.yml@<tag>
 #       secrets:
 #         RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+#         DEPENDABOT_APP_PRIVATE_KEY: ${{ secrets.DEPENDABOT_APP_PRIVATE_KEY }} # repos with reviews
 on:
   workflow_call:
     secrets:
       RELEASE_APP_PRIVATE_KEY:
         required: true
         description: Private key of the jonomait-release app (org Dependabot secret)
+      DEPENDABOT_APP_PRIVATE_KEY:
+        required: false
+        description: Private key of the jonomait-dependabot app (org Dependabot secret only), for repos whose main needs a review
 
 permissions:
   contents: read
@@ -38,10 +49,13 @@ jobs:
     name: auto-merge
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Waiting for the required checks (image build and scan, site build) is the long part.
+    timeout-minutes: 60
+    env:
+      HAS_DEPENDABOT_APP: ${{ secrets.DEPENDABOT_APP_PRIVATE_KEY != '' && vars.DEPENDABOT_APP_CLIENT_ID != '' }}
     steps:
-      - name: App token
-        id: app
+      - name: App token (jonomait-release)
+        id: release
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
@@ -51,9 +65,10 @@ jobs:
           # Dependabot also bumps actions inside .github/workflows: merging those needs it.
           permission-workflows: write
 
-      - name: Merge patch and minor, hold major
+      - name: Patch and minor, or major?
+        id: kind
         env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_TOKEN: ${{ steps.release.outputs.token }}
           GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: |
@@ -67,7 +82,60 @@ jobs:
             gh pr edit "$PR" --add-label dependabot:manual
             gh pr merge "$PR" --disable-auto 2>/dev/null || true
             echo "::notice::#$PR has a major (or unknown) update: it waits for a person."
-          else
-            gh pr merge "$PR" --auto --squash
-            echo "::notice::#$PR ($(tr '\n' ' ' <<<"$types")) merges itself when the required checks pass."
+            echo "safe=false" >>"$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "safe=true" >>"$GITHUB_OUTPUT"
+          echo "types=$(tr '\n' ' ' <<<"$types")" >>"$GITHUB_OUTPUT"
+          # Does main ask for an approval? (rules that apply to main, from every ruleset)
+          approvals=$(gh api "repos/$GH_REPO/rules/branches/${{ github.base_ref }}" \
+            --jq '[.[] | select(.type == "pull_request") | .parameters.required_approving_review_count] | max // 0')
+          echo "approvals=$approvals" >>"$GITHUB_OUTPUT"
+          echo "main needs $approvals approval(s)"
+
+      - name: Auto-merge (no review needed, or no bypass app)
+        if: steps.kind.outputs.safe == 'true' && (steps.kind.outputs.approvals == '0' || env.HAS_DEPENDABOT_APP != 'true')
+        env:
+          GH_TOKEN: ${{ steps.release.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          TYPES: ${{ steps.kind.outputs.types }}
+          APPROVALS: ${{ steps.kind.outputs.approvals }}
+        run: |
+          set -euo pipefail
+          gh pr merge "$PR" --auto --squash
+          if [ "$APPROVALS" = "0" ]; then
+            echo "::notice::#$PR ($TYPES) merges itself when the required checks pass."
+          else
+            echo "::warning::#$PR ($TYPES): main needs a review and DEPENDABOT_APP_PRIVATE_KEY / DEPENDABOT_APP_CLIENT_ID are not set; it merges after the approval."
+          fi
+
+      - name: App token (jonomait-dependabot)
+        id: dependabot
+        if: steps.kind.outputs.safe == 'true' && steps.kind.outputs.approvals != '0' && env.HAS_DEPENDABOT_APP == 'true'
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.DEPENDABOT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEPENDABOT_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+          permission-checks: read
+          permission-statuses: read
+
+      - name: Wait for the required checks, merge without the review
+        if: steps.dependabot.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.dependabot.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          TYPES: ${{ steps.kind.outputs.types }}
+        run: |
+          set -euo pipefail
+          # The bypass skips the whole ruleset, checks included: this wait is what keeps them.
+          # Fails (and does not merge) as soon as a required check fails.
+          gh pr checks "$PR" --required --watch --fail-fast --interval 30
+          # Merge exactly the commit whose checks passed: a newer push gets its own run.
+          gh api -X PUT "repos/$GH_REPO/pulls/$PR/merge" -f merge_method=squash -f sha="$HEAD" >/dev/null
+          echo "::notice::#$PR ($TYPES) merged by jonomait-dependabot after the required checks passed."

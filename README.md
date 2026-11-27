@@ -52,7 +52,14 @@ An accepted finding is an exception **annotated in the code, with the reason**, 
 
 ## dependabot-auto-merge
 
-Dependabot PRs whose updates are all **patch or minor** get auto-merge (squash) and land when the repo's required checks pass; a **major** (or an update type it cannot read) gets the label `dependabot:manual` and waits. The types come from the `updated-dependencies` metadata in Dependabot's commit message. It uses the `jonomait-release` app (a merge through `GITHUB_TOKEN` would start no deploy or release on `main`), whose key must also be an org **Dependabot** secret `RELEASE_APP_PRIVATE_KEY`, since Dependabot-triggered runs see only Dependabot secrets.
+Dependabot PRs whose updates are all **patch or minor** merge themselves (squash) once the repo's required checks pass; a **major** (or an update type it cannot read) gets the label `dependabot:manual` and waits. The types come from the `updated-dependencies` metadata in Dependabot's commit message. A merge through `GITHUB_TOKEN` would start no deploy or release on `main`, so a GitHub App merges:
+
+| main of the repo | App | How |
+|---|---|---|
+| needs no review (platform, sites) | `jonomait-release` | auto-merge on; GitHub merges when the checks pass |
+| needs a review (apps, code owners) | `jonomait-dependabot` | waits for the required checks, then merges without the review: the app is a bypass actor of the `main` ruleset (`organization`, `global/github`, `dependabot_app_id`) |
+
+Dependabot-triggered runs see only org **Dependabot** secrets: `RELEASE_APP_PRIVATE_KEY` there too, and `DEPENDABOT_APP_PRIVATE_KEY` **only** there, so no other workflow can use the bypass. `DEPENDABOT_APP_CLIENT_ID` is an org variable. A repo that needs a review and has no Dependabot app gets auto-merge on and merges after the approval.
 
 ## terraform-deploy
 
