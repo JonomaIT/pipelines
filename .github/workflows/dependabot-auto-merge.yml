@@ -1,0 +1,73 @@
+name: dependabot-auto-merge
+
+# Reusable. Dependabot pull requests merge themselves when they are safe:
+#   patch and minor (every dependency in the PR)   auto-merge (squash): lands when the required
+#                                                  checks of the repo's ruleset pass
+#   any major, or an update type it cannot read    label dependabot:manual, waits for a person
+# The update types come from the "updated-dependencies" metadata Dependabot writes in its commit
+# message (the same data dependabot/fetch-metadata reads), so no third-party action is needed.
+#
+# It runs with the jonomait-release GitHub App, not GITHUB_TOKEN: a merge done through
+# GITHUB_TOKEN starts no workflow, so the push to main would not deploy (sites) nor release
+# (terraform-modules, pipelines). Workflows triggered by Dependabot only see Dependabot secrets:
+# the app key must also exist as an org **Dependabot** secret RELEASE_APP_PRIVATE_KEY.
+#
+#   on:
+#     pull_request:
+#       branches: [main]
+#   permissions:
+#     contents: read
+#   jobs:
+#     dependabot:
+#       if: github.actor == 'dependabot[bot]'
+#       uses: JonomaIT/pipelines/.github/workflows/dependabot-auto-merge.yml@<tag>
+#       secrets:
+#         RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+on:
+  workflow_call:
+    secrets:
+      RELEASE_APP_PRIVATE_KEY:
+        required: true
+        description: Private key of the jonomait-release app (org Dependabot secret)
+
+permissions:
+  contents: read
+
+jobs:
+  auto-merge:
+    name: auto-merge
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: App token
+        id: app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          # Dependabot also bumps actions inside .github/workflows: merging those needs it.
+          permission-workflows: write
+
+      - name: Merge patch and minor, hold major
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          types=$(gh api "repos/$GH_REPO/pulls/$PR/commits" --jq '.[].commit.message' \
+            | grep -oE 'update-type: version-update:semver-[a-z]+' | sed 's/.*semver-//' | sort -u || true)
+          echo "update types: ${types:-none}"
+          if [ -z "$types" ] || grep -qvE '^(patch|minor)$' <<<"$types"; then
+            gh label create dependabot:manual --color B60205 \
+              --description "Dependabot update with a major (or unknown) version: merge by hand" 2>/dev/null || true
+            gh pr edit "$PR" --add-label dependabot:manual
+            gh pr merge "$PR" --disable-auto 2>/dev/null || true
+            echo "::notice::#$PR has a major (or unknown) update: it waits for a person."
+          else
+            gh pr merge "$PR" --auto --squash
+            echo "::notice::#$PR ($(tr '\n' ' ' <<<"$types")) merges itself when the required checks pass."
+          fi
