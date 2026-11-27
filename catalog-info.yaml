@@ -1,0 +1,15 @@
+# Software catalog entry (Backstage format). It is the source of truth for what this repo is,
+# who owns it and how it runs; a portal or a script can read every repo's file.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: pipelines
+  description: "Reusable GitHub workflows, actions and Terraform runners that turn an app's values into a running app."
+  annotations:
+    github.com/project-slug: JonomaIT/pipelines
+  tags: [github-actions,terraform,ci-cd]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:jonomait/gh-infra
+  system: platform
