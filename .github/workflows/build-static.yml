@@ -35,7 +35,7 @@ jobs:
 
       # Only contract fields in deploy/, none of the platform's, name = repo name (ADR-014).
       - name: App contract
-        uses: JonomaIT/pipelines/.github/actions/contract-check@v2.11.0 # x-release-please-version
+        uses: JonomaIT/pipelines/.github/actions/contract-check@v2.12.0 # x-release-please-version
 
       - name: Trivy (dependencies, HIGH and CRITICAL with a fix)
         run: |
