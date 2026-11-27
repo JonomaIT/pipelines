@@ -19,6 +19,10 @@
         {
           "type": "generic",
           "path": ".github/workflows/deploy-app.yml"
+        },
+        {
+          "type": "generic",
+          "path": ".github/workflows/dependabot.yml"
         }
       ]
     }
