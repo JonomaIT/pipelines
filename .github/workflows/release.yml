@@ -49,13 +49,15 @@ jobs:
           manifest-file: .release-please-manifest.json
 
       - name: Auto-merge patch and minor releases
-        if: steps.release.outputs.pr
+        if: steps.release.outputs.pr != ''
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           GH_REPO: ${{ github.repository }}
-          PR: ${{ fromJSON(steps.release.outputs.pr).number }}
+          # Raw JSON, parsed in the script: fromJSON() of an empty output breaks the whole step.
+          PR_JSON: ${{ steps.release.outputs.pr }}
         run: |
           set -euo pipefail
+          PR=$(jq -r .number <<<"$PR_JSON")
           if gh pr view "$PR" --json body --jq .body | grep -q 'BREAKING CHANGES'; then
             gh label create release:manual --color B60205 \
               --description "Release with a breaking change: merge by hand" 2>/dev/null || true
