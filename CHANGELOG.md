@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.1](https://github.com/JonomaIT/pipelines/compare/v2.13.0...v2.13.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **dependabot-auto-merge:** log each app key SHA256 fingerprint ([#46](https://github.com/JonomaIT/pipelines/issues/46)) ([4d7904e](https://github.com/JonomaIT/pipelines/commit/4d7904e2a0a449535503774d20c29b905be6a334))
+
 ## [2.13.0](https://github.com/JonomaIT/pipelines/compare/v2.12.0...v2.13.0) (2026-11-27)
 
 
