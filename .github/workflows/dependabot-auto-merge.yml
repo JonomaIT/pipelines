@@ -54,6 +54,26 @@ jobs:
     env:
       HAS_DEPENDABOT_APP: ${{ secrets.DEPENDABOT_APP_PRIVATE_KEY != '' && vars.DEPENDABOT_APP_CLIENT_ID != '' }}
     steps:
+      # Public data only: the SHA256 fingerprint of each key, the same value GitHub lists under the
+      # app's "Private keys". If a token step fails with "JSON web token could not be decoded",
+      # compare it there: the key in Dependabot secrets is not one of that app's keys.
+      - name: Key fingerprints (compare with each app's Private keys)
+        env:
+          RELEASE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          DEPENDABOT_KEY: ${{ secrets.DEPENDABOT_APP_PRIVATE_KEY }}
+        run: |
+          fingerprint() {
+            if [ -z "$2" ]; then echo "$1: not set"; return; fi
+            if printf '%s\n' "$2" | openssl pkey -pubout -outform DER -out pub.der 2>/dev/null; then
+              echo "$1: SHA256:$(openssl dgst -sha256 -binary pub.der | openssl base64 -A)"
+            else
+              echo "$1: not a valid private key ($(printf '%s\n' "$2" | wc -l) lines)"
+            fi
+            rm -f pub.der
+          }
+          fingerprint "jonomait-release (RELEASE_APP_PRIVATE_KEY)" "$RELEASE_KEY"
+          fingerprint "jonomait-dependabot (DEPENDABOT_APP_PRIVATE_KEY)" "$DEPENDABOT_KEY"
+
       - name: App token (jonomait-release)
         id: release
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
